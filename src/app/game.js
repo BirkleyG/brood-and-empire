@@ -349,8 +349,8 @@ function frame(now){
   if(actMode)effSpeed=Math.min(effSpeed,0.15);
   const blocked=bookOpen||chapterOpen||choiceOpen||introOn||actOpen||!$('#create').hidden||!$('#worlds').hidden||!$('#defeat').hidden;
   if(S.maker&&S.maker.defeated&&!saga.defeatShown&&!blocked)showDefeat();
-  if(running&&!blocked&&skipping){const t0=performance.now();while(performance.now()-t0<45){S.step(1/4);if(saga.pending||saga.choice)break}simAcc=0}
-  else if(running&&!blocked&&!saga.choice){simAcc+=rdt*effSpeed*YPS;const dt=effSpeed<=1.2?1/20:effSpeed<=5?1/12:effSpeed<=45?1/6:1/4;const t0=performance.now();while(simAcc>=dt){S.step(dt);simAcc-=dt;if(saga.pending||saga.choice){simAcc=0;break}if(performance.now()-t0>22){simAcc=0;break}}}
+  if(running&&!blocked&&skipping&&!saga.cardBusy){const t0=performance.now();while(performance.now()-t0<45){S.step(1/4);if(saga.pending||saga.choice)break}simAcc=0}
+  else if(running&&!blocked&&!saga.choice&&!saga.cardBusy){simAcc+=rdt*effSpeed*YPS;const dt=effSpeed<=1.2?1/20:effSpeed<=5?1/12:effSpeed<=45?1/6:1/4;const t0=performance.now();while(simAcc>=dt){S.step(dt);simAcc-=dt;if(saga.pending||saga.choice){simAcc=0;break}if(performance.now()-t0>22){simAcc=0;break}}}
   if(!blocked&&saga.choice)openChoice(saga.choice);
   else if(!blocked&&saga.pending)openChapter();
   CURYEAR=S.year;
@@ -523,7 +523,7 @@ let saga={};
 let chapterOpen=false,downloadsFn=null,rec=null;
 function sagaReset(){
   saga={on:$('#sagaOn')?$('#sagaOn').checked:true,target:+($('#ages')?$('#ages').value:0),endRequested:false,ch:[],ageStart:0,crisisDone:false,pending:false,ended:false,finaleStarted:false,closing:null};
-  rec={frames:[],ruins:[]};S.onYear=onYear;S.noRespawn=saga.on;recordFrame(0);sagaUI();
+  setListening(false);rec={frames:[],ruins:[]};S.onYear=onYear;S.noRespawn=saga.on;recordFrame(0);sagaUI();
 }
 function recordFrame(y){const f={y,s:S.setts.map(s=>[Math.round(s.x),Math.round(s.y),s.fac,s.level]),a:S.facs.filter(f=>f.army&&f.died==null).map(f=>[Math.round(f.army.x),Math.round(f.army.y),f.id]),p:{}};for(const fa of S.facs)if(fa.died==null)f.p[fa.id]=fa.pop;rec.frames.push(f)}
 function popAt(fid,y){let best=null;for(const fr of rec.frames){if(fr.y>y)break;best=fr}return best?best.p[fid]||0:0}
@@ -783,7 +783,7 @@ $('#ages').onchange=e=>{saga.target=+e.target.value;if(saga.target&&saga.ch.leng
 if($('#endBtn'))$('#endBtn').onclick=()=>{if(saga.ended||!saga.on)return;saga.endRequested=true;sagaUI();markDirty()};
 $('#sagaOn').onchange=e=>{saga.on=e.target.checked;S.noRespawn=saga.on;sagaUI()};
 function sagaRestore(P){
-  saga=P.saga;saga.target=0;saga.cardBusy=false;if(S.migrateGame)S.migrateGame();rec=P.rec||{frames:[],ruins:[]};S.onYear=onYear;S.noRespawn=saga.on;
+  saga=P.saga;saga.target=0;saga.cardBusy=false;setListening(false);if(S.migrateGame)S.migrateGame();rec=P.rec||{frames:[],ruins:[]};S.onYear=onYear;S.noRespawn=saga.on;
   SAVE.id=P.meta.id;SAVE.at=P.meta.savedAt;SAVE.where='';
   if(P.cam){cam.x=P.cam.x;cam.y=P.cam.y;cam.z=P.cam.z;clampCam()}
   speed=P.speed||1;document.querySelectorAll('#speed button').forEach(x=>x.setAttribute('aria-pressed',+x.dataset.s===speed));
@@ -957,7 +957,7 @@ function endSkip(){if(skipping){skipping=false;setSpeed(1)}skipUI()}
 function petitionTick(Y){if(saga.choice||saga.ended)return;if(saga.nextPet==null)saga.nextPet=saga.ageStart+Math.round(ageLimits().base*(0.4+Math.random()*0.25));
   if(Y>=saga.nextPet){saga.nextPet=saga.on?Infinity:Y+90+Math.round(Math.random()*40);const p=S.findPetition();if(p)saga.choice=p}}
 function choicePortraits(ch){const ids=new Set();const c=ch.ctx||{};for(const k of ['f','a','b','top','low'])if(c[k]!=null&&S.facs[c[k]])ids.add(c[k]);if(c.m!=null&&S.moves[c.m])ids.add(S.moves[c.m].fac);return[...ids].slice(0,2).map(id=>S.facs[id])}
-function openChoice(ch){if(ch.kind==='gen')return openGameCard(ch);if(ch.kind==='call')return openProphetCall(ch);const v=S.choiceView(ch);if(!v||!v.opts||!v.opts.length){finishChoice(ch);return}
+function openChoice(ch){if(ch.kind==='gen'){const chk=S.checkCard(ch.trigger,ch.card);if(!chk.ok){saga.choice=null;reissueCard(ch.trigger||{},chk,ch.regen);return}return openGameCard(ch)}if(ch.kind==='call')return openProphetCall(ch);const v=S.choiceView(ch);if(!v||!v.opts||!v.opts.length){finishChoice(ch);return}
   choiceOpen=true;const box=$('#choice');box.hidden=false;const fs=choicePortraits(ch);
   $('#chCard').innerHTML=`<div class="chk">${ch.kind==='turning'?'The age turns':'A petition'} · year ${Math.floor(S.year)}</div><h2 class="cht">${esc(v.title)}</h2>
   ${fs.length?`<div class="chp">${fs.map(f=>`<figure><canvas data-chf="${f.id}"></canvas><figcaption>${esc(f.name)}${(f.knows||0)>0.12?`<small>call you ${esc(S.makerWord(f))}</small>`:'<small>do not know you</small>'}</figcaption></figure>`).join('')}</div>`:''}
@@ -1082,6 +1082,7 @@ About ${b.share} in a hundred of your people share your faith.
 Your temperament: ${b.traits.join(', ')||'steady'}; devotion ${Math.round(b.piety*100)}/100. Your deeds: ${b.deeds.join('; ')||'none yet'}.
 Wars: ${b.wars.join(', ')||'none'}. Neighbours: ${b.neighbours.join('; ')||'none near'}.
 Recent events of your people: ${b.recent.join('; ')||'quiet years'}.
+HAPPENING RIGHT NOW (live, year ${b.year}): ${liveFor(c.fac).map(x=>x.why).join(' | ')||'nothing urgent'}. Everything above is current.
 
 The Maker is speaking to you directly, in a vision. ${hist?`So far:\n${hist}\n`:''}THE MAKER NOW SAYS: "${text}"
 
@@ -1103,18 +1104,26 @@ async function speakTo(cid,text){if(voiceBusy||S.maker.power<2)return;const c=S.
   const b=S.contactBrief(cid);let res=null;
   if(sampleFn){try{res=await sampleFn.json(voicePrompt(c,b,text),{cache:false})}catch(e){if(e&&['not_granted','capability_disabled','capability_removed'].includes(e.code))sampleFn=null}}
   if(!res||typeof res.reply!=='string')res=fallbackVoice(b,text);
+  if(!c.alive){S.maker.power+=2;c.convo.push({from:'them',text:'(no answer: they are gone, and your power returns to you)',yr:Math.floor(S.year),done:[]});voiceBusy=false;markDirty();if(voiceC===cid&&!$('#p-voices').hidden)renderChat();renderHand();return}
   const done=S.applyDecrees(cid,Array.isArray(res.acts)?res.acts:[],text);c.convo.push({from:'them',text:res.reply.slice(0,900),yr:Math.floor(S.year),done});voiceBusy=false;markDirty();if(voiceC===cid&&!$('#p-voices').hidden)renderChat();renderHand()}
 
 // ================= THE GAME LAYER: cards, the prophet's call, the HUD, defeat =================
 const YPS=0.4; // years per second at 1x: an age takes roughly 7-10 minutes
+// Cards are about LIVE crises: S.cardTrigger(true) scans what is happening now (a siege, a plague, a rising cult, a collapsing faith...)
+// and a card fires as the situation starts or escalates. Quiet 'moment' cards fill peaceful stretches.
+const CARD_GAP_BIG=10,CARD_GAP_SMALL=16,CARD_GAP_MOMENT=22,EMERG_PER_AGE=5,MOMENTS_PER_AGE=3;
 function cardTick(Y){if(saga.cardBusy||saga.choice||saga.ended||S.maker.defeated)return;
-  if(saga.nextCard==null)saga.nextCard=saga.ageStart+28+Math.floor(Math.random()*14);
+  if(saga.nextCard==null)saga.nextCard=saga.ageStart+30+Math.floor(Math.random()*20);
   if(saga.convoAt==null)saga.convoAt=saga.ageStart+80+Math.floor(Math.random()*50);
   // the lead prophet calls, once an age
   if(!saga.convoDone&&Y>=saga.convoAt){saga.convoDone=true;const c=S.leadProphet();if(c){saga.choice={kind:'call',c:c.id,yr:Y};return}}
-  // emergencies cut in line
-  if((saga.emergThisAge||0)<2&&Y-(saga.lastCard==null?-99:saga.lastCard)>=15){const t=S.cardTrigger(true);if(t){saga.emergThisAge=(saga.emergThisAge||0)+1;requestCard(t);return}}
-  if(Y>=saga.nextCard&&(saga.cardsThisAge||0)<5){saga.nextCard=Y+32+Math.floor(Math.random()*14);const t=S.cardTrigger(false);if(t)requestCard(t)}}
+  const since=Y-(saga.lastCard==null?-99:saga.lastCard);
+  // a live crisis: short cooldown, bigger crises may cut in sooner
+  if((saga.emergThisAge||0)<EMERG_PER_AGE&&since>=CARD_GAP_BIG){const t=S.cardTrigger(true);if(t&&(t.sev>=3||since>=CARD_GAP_SMALL)){requestCard(t);return}}
+  // a quiet-time dilemma, only when nothing is burning
+  if(Y>=saga.nextCard&&(saga.cardsThisAge||0)<MOMENTS_PER_AGE&&since>=CARD_GAP_MOMENT){saga.nextCard=Y+34+Math.floor(Math.random()*26);const t=S.cardTrigger(false);if(t)requestCard(t)}}
+// the small 'the Maker listens...' marker shown while the world waits for a card to be written
+function setListening(on){let el=document.getElementById('listen');if(!el){el=document.createElement('div');el.id='listen';el.setAttribute('role','status');el.hidden=true;el.innerHTML='<span class="pulse"></span> The Maker listens\u2026 time waits';document.body.appendChild(el)}el.hidden=!on}
 const FX_DOC=`food {people, amount -1..1}; unrest {people, amount -1..1}; values {people, values:{martial,faith,art,trade,knowledge,order,harmony each -0.25..0.25}}; ruler {people, traits:{ambition,cruelty,honor,piety,greed,paranoia,warmth,genius each -0.5..0.5}}; kill_ruler {people}; depose {people}; war {people, target}; peace {people, target}; ally {people, target}; bless_army {people}; champion {people}; tech {people}; faith {people, amount -0.4..0.4}; mission {people, target}; cult {people, action:"crush"|"expose"|"merge"}; prophet {people}; heal {people}; plague {people}; golden {people}; grow {people, amount 0..1}; migrate {people}; persecute {people}; gov {people, gov}; greatness {amount -15..15}; mercy {amount -15..15}`;
 const ERA_DILEMMAS={
  'Stone Age':['who keeps the fire','the first burial: burn, bury or eat the dead','a beast that could be tamed or worshipped','a chief who wants to be a god','twins born: one must be given to the forest','the first murder','a stranger band at the river','a rival tribe\'s stolen children'],
@@ -1138,7 +1147,10 @@ ${JSON.stringify(b)}
 THE AGE: ${S.world.age?S.world.age.name+': '+S.world.age.text:'the dawn of the world'}. Era of the Maker's people: ${era}.
 THE WORLD'S DANGERS: ${(()=>{const d=S.doomInfo();return[d.ai>0?`machines in the land of the ${d.aiWho} are ${d.ai}% of the way to a mind greater than the Maker's (if it wakes, the Maker is finished)`:'',d.carbon>4?`the climate is changing (${d.carbon})`:'',d.fallout?`${d.fallout} cities have burned in nuclear fire`:'',S.gods.filter(g=>g.key.startsWith('undying')&&g.alive).map(g=>g.name+' has become immortal').join(', ')].filter(Boolean).join('; ')||'none yet'})()}
 YOUR FAITH'S DOCTRINES: ${docs.map(D=>D.name+' ('+S.docText(D)+')').join('; ')||'none yet'}.
-WHY THIS CARD: ${b.trigger?b.trigger.why:'a quiet moment'}
+WHY THIS CARD (LIVE: this is happening in year ${b.year} and is unresolved, it is not history): ${b.trigger?b.trigger.why:'a quiet moment'}
+${b.trigger&&b.trigger.expires?`The matter will not wait past year ${b.trigger.expires}.`:''}
+OTHER LIVE SITUATIONS: ${(b.live||[]).join(' | ')||'none'}
+FRESHNESS RULES: the premise above is true right now and the people in it are alive. The card must open by stating that premise. Every option must act on it while it is still undecided, so never write it as already over, and never mention a people or person who is not listed in the facts above. Use ONLY these peoples by exact name: ${(()=>{const n=new Set();for(const p of b.peoples){n.add(p.name);(p.wars||[]).concat(p.allies||[]).forEach(x=>n.add(x))}(b.neighbours||[]).forEach(x=>{const m=/^the ([^:]+):/.exec(x);if(m)n.add(m[1])});if(b.trigger&&b.trigger.enemy)n.add(b.trigger.enemy);return[...n].join(', ')})()}.
 ${b.danger?`THE MAKER IS IN DANGER: ${b.danger}`:''}
 Recent card titles (do NOT repeat their topic or shape): ${recentT.join(' | ')||'none'}
 Dilemmas that fit this era (use one, combine two, or invent a better one that fits the facts): ${eraD.join('; ')}; and always possible: ${DILEMMAS.join('; ')}.
@@ -1158,14 +1170,40 @@ Governments: ${Object.keys(S.GOVS).join(', ')}.
 Reply with JSON only:
 {"title":"3-6 words","scene":"2-3 vivid sentences, present tense, naming who and where","speaker":"who is asking, or null","options":[{"label":"imperative, under 9 words","hint":"what it costs and gains, under 12 words","lean":"greatness"|"mercy"|"none","weight":0-30,"outcome":"2 sentences: what actually happens, including the price paid","effects":[{"fx":"...", ...}]}]}`}
 function validCard(j,b){if(!j||typeof j!=='object'||!Array.isArray(j.options))return null;const keys=new Set(S.FX_KEYS);
-  const opts=j.options.slice(0,3).map((o,i)=>({id:'o'+i,label:String(o.label||'Do nothing').slice(0,80),hint:String(o.hint||'').slice(0,110),lean:['greatness','mercy'].includes(o.lean)?o.lean:'none',cost:Math.round(clamp(+(o.weight!=null?o.weight:o.cost)||0,0,30)),outcome:String(o.outcome||'').slice(0,400),effects:(Array.isArray(o.effects)?o.effects:[]).filter(e=>e&&keys.has(e.fx)).slice(0,3)})).filter(o=>o.label);
-  if(opts.length<2)return null;
+  const reach=new Set(S.reach().map(f=>f.name.toLowerCase())),live=new Set(S.alive().map(f=>f.name.toLowerCase()));const nm=n=>String(n).toLowerCase().replace(/^the /,'');
+  const dflt=b&&b.trigger&&b.trigger.people;
+  // an effect must name peoples that exist right now; anything else is dropped here, so no card can speak of the dead
+  const okFx=e=>{if(!e||!keys.has(e.fx))return false;if(['greatness','mercy','doctrine'].includes(e.fx))return true;if(e.people==null&&dflt)e.people=dflt;if(e.people!=null&&!reach.has(nm(e.people)))return false;if(e.target!=null&&!live.has(nm(e.target)))return false;return true};
+  const opts=j.options.slice(0,3).map((o,i)=>({id:'o'+i,label:String(o.label||'Do nothing').slice(0,80),hint:String(o.hint||'').slice(0,110),lean:['greatness','mercy'].includes(o.lean)?o.lean:'none',cost:Math.round(clamp(+(o.weight!=null?o.weight:o.cost)||0,0,30)),outcome:String(o.outcome||'').slice(0,400),effects:(Array.isArray(o.effects)?o.effects:[]).filter(okFx).slice(0,3)})).filter(o=>o.label);
+  if(opts.length<2||!opts.some(o=>o.effects.some(e=>!['greatness','mercy'].includes(e.fx))))return null;
   return{title:String(j.title||'A Moment').slice(0,70),scene:String(j.scene||'').slice(0,600),speaker:j.speaker?String(j.speaker).slice(0,80):null,opts}}
-async function requestCard(t){saga.cardBusy=true;saga.cardTitles=saga.cardTitles||[];saga.lastCard=Math.floor(S.year);saga.cardsThisAge=(saga.cardsThisAge||0)+(t.kind==='emergency'?0:1);const b=S.godBrief(t);b.danger=S.dangerText();let card=null;
-  if(sampleFn){try{const p=sampleFn.json(cardPrompt(b),{cache:false});const to=new Promise(r=>setTimeout(()=>r(null),20000));card=validCard(await Promise.race([p,to]),b)}catch(e){if(e&&['not_granted','capability_disabled','capability_removed'].includes(e.code))sampleFn=null}}
-  if(!card)card=fallbackCard(t,b);saga.cardTitles.push(card.title);if(saga.cardTitles.length>10)saga.cardTitles.shift();saga.cardBusy=false;if(S.maker.defeated)return;saga.choice={kind:'gen',card,trigger:t,yr:Math.floor(S.year)}}
+// Writing a card pauses the world (saga.cardBusy stops the sim loop; `running` is untouched, so a player who had paused stays paused).
+// When the card is ready it is checked against the world AS IT IS NOW; a stale card is regenerated once, else dropped with a message.
+async function requestCard(t,regen){if(!t)return;const mine=saga;mine.cardBusy=true;setListening(true);S.markCard(t);mine.cardTitles=mine.cardTitles||[];mine.lastCard=Math.floor(S.year);
+  if(!regen){if(t.kind==='emergency')mine.emergThisAge=(mine.emergThisAge||0)+1;else mine.cardsThisAge=(mine.cardsThisAge||0)+1}
+  let card=null;
+  try{const b=S.godBrief(t);b.danger=S.dangerText();
+    if(sampleFn){let timer;try{const p=sampleFn.json(cardPrompt(b),{cache:false});const to=new Promise(r=>{timer=setTimeout(()=>r(null),20000)});card=validCard(await Promise.race([p,to]),b)}catch(e){if(e&&['not_granted','capability_disabled','capability_removed'].includes(e.code))sampleFn=null}finally{clearTimeout(timer)}}
+    if(!card&&saga===mine)card=fallbackCard(t,S.godBrief(t))}
+  catch(err){console.warn('card',err)}
+  finally{if(saga===mine){mine.cardBusy=false;setListening(false)}}
+  if(saga!==mine||S.maker.defeated)return; // the world was replaced or lost while we waited
+  if(!card){dropCard(t,{msg:'The moment slipped away.'});return}
+  const chk=S.checkCard(t,card);if(!chk.ok){reissueCard(t,chk,regen);return}
+  mine.cardTitles.push(card.title);if(mine.cardTitles.length>10)mine.cardTitles.shift();
+  saga.choice={kind:'gen',card,trigger:t,yr:Math.floor(S.year),regen:!!regen}}
+// a card whose premise or people changed while it was being written or waiting: write it again once from fresh facts, or let it go
+function reissueCard(t,chk,wasRegen){if(wasRegen){dropCard(t,chk);return}
+  const t2=chk.stale==='target'&&t.why?S.freshTrigger(t):S.cardTrigger(true);
+  if(t2){requestCard(t2,true);return}
+  dropCard(t,chk)}
+function dropCard(t,chk){const f=S.reach()[0];const p=f?(S.capitalOf(f)||f.origin):{x:S.W/2,y:S.H/2};
+  S.log('cardvoid',1,'The Moment Passes',`${chk.msg||'The moment has passed.'} The Maker was about to be asked, but the matter is settled now. Nothing was asked of you, and nothing was spent.`,p.x,p.y,f?[f]:[],{maker:true,why:['A decision that would have come too late was set aside.']});
+  // the card never reached the player: give back its slot
+  if(t&&t.kind==='emergency')saga.emergThisAge=Math.max(0,(saga.emergThisAge||0)-1);else saga.cardsThisAge=Math.max(0,(saga.cardsThisAge||0)-1);
+  if(t&&t.grp)S.unmarkCard(t);markDirty()}
 // cards written without Claude, from the same effect menu
-function fallbackCard(t,b){const P=b.peoples[0]||{name:'',wars:[]};const pn=P.name;const why=(t&&t.why)||'';const W=P.wars[0];const nb=(b.neighbours[0]||'').replace(/^the ([^:]+):.*/,'$1');const o=(label,hint,lean,cost,outcome,effects)=>({label,hint,lean,cost,outcome,effects:effects.concat(lean==='greatness'?[{fx:'unrest',people:pn,amount:0.25}]:lean==='mercy'?[{fx:'faith',people:pn,amount:-0.06}]:[{fx:'faith',people:pn,amount:-0.1}])});let title,scene,opts;
+function fallbackCard(t,b){const P=b.peoples.find(p=>t&&p.name===t.people)||b.peoples[0]||{name:'',wars:[]};const pn=P.name;const why=(t&&t.why)||'';const W=(t&&t.enemy&&P.wars.includes(t.enemy)?t.enemy:null)||P.wars[0];const nb=(b.neighbours[0]||'').replace(/^the ([^:]+):.*/,'$1');const o=(label,hint,lean,cost,outcome,effects)=>({label,hint,lean,cost,outcome,effects:effects.concat(lean==='greatness'?[{fx:'unrest',people:pn,amount:0.25}]:lean==='mercy'?[{fx:'faith',people:pn,amount:-0.06}]:[{fx:'faith',people:pn,amount:-0.1}])});let title,scene,opts;
   const has=re=>re.test(why);
   if(has(/war|march|conquer|razed|capital|attack/i)&&W){title=`War with the ${W}`;scene=`${why} The people of the ${pn} look to the sky before the armies meet.`;opts=[o('Fill their soldiers with your fury','Victory through terror','greatness',15,`The army of the ${pn} fought as if possessed.`,[{fx:'bless_army',people:pn}]),o('Raise a champion among them','One hero, remembered forever','greatness',8,`A champion stepped out of the ranks of the ${pn}.`,[{fx:'champion',people:pn}]),o('Command them to make peace','Mercy, and a bitter truce','mercy',4,`The ${pn} laid down their spears.`,[{fx:'peace',people:pn,target:W}])]}
   else if(has(/plague|sickness/i)){title='The Sickness';scene=`${why} The priests of the ${pn} burn incense day and night.`;opts=[o('Heal them all','Mercy, at a price','mercy',14,`The fevers broke on the same night across the land of the ${pn}.`,[{fx:'heal',people:pn}]),o('Spare only the faithful','Faith becomes life or death','greatness',6,`The sickness passed over every house with a prayer on its door.`,[{fx:'faith',people:pn,amount:0.2}]),o('Let it run its course','They endure alone','none',0,`The plague burned itself out.`,[{fx:'faith',people:pn,amount:-0.05}])]}
@@ -1179,16 +1217,27 @@ function fallbackCard(t,b){const P=b.peoples[0]||{name:'',wars:[]};const pn=P.na
 // ---------- showing a card ----------
 const LEAN={greatness:['☀','Greatness'],mercy:['❦','Mercy'],none:['',''] };
 function openGameCard(ch){choiceOpen=true;const box=$('#choice');box.hidden=false;const c=ch.card;const pw=S.maker.power;const emer=ch.trigger&&ch.trigger.kind==='emergency';
-  $('#chCard').innerHTML=`<div class="chk">${emer?'Your people are in danger':'A moment of your people'} · year ${ch.yr}</div><h2 class="cht">${esc(c.title)}</h2>${c.speaker?`<div class="chsp">${esc(c.speaker)}</div>`:''}
+  $('#chCard').innerHTML=`<div class="chk">${emer?'Your people are in danger':'A moment of your people'} · year ${ch.yr}</div>${ch.trigger&&ch.trigger.why?`<div class="chprem">${tagNames(esc(ch.trigger.why.replace(/^\d+: /,'')))}${ch.trigger.deadline!=null?` <i>It will not wait past year ${ch.trigger.deadline}.</i>`:''}</div>`:''}<h2 class="cht">${esc(c.title)}</h2>${c.speaker?`<div class="chsp">${esc(c.speaker)}</div>`:''}
   <p class="chb">${tagNames(esc(c.scene))}</p><div class="cho">${c.opts.map(o=>{const no=false;return`<button type="button" class="chbtn lean-${o.lean}" data-cho="${o.id}"${no?' disabled':''}><b>${tagNames(esc(o.label))}</b><span>${tagNames(esc(no?'Not enough power':o.hint))}</span>${deltaChips(o)}</button>`}).join('')}</div><div class="chpow">☀ Greatness ${Math.round(S.maker.greatness)} · ❦ Mercy ${Math.round(S.maker.mercy)} · other consequences are hidden until you choose</div>`;
   const first=box.querySelector('.chbtn:not([disabled])');if(first)first.focus({preventScroll:true});
-  box.onclick=e=>{const b=e.target.closest('[data-cho]');if(!b||b.disabled)return;box.querySelectorAll('.chbtn').forEach(x=>x.disabled=true);const o=c.opts.find(x=>x.id===b.dataset.cho);const res=applyGameChoice(ch,o);
-    $('#chCard').querySelector('.cho').outerHTML=`<p class="chout">${tagNames(esc(o.outcome||'It is done.'))}</p>${res.length?`<ul class="chfx">${res.map(r=>`<li>${tagNames(esc(r))}</li>`).join('')}</ul>`:''}<div class="chrow"><button type="button" class="btn primary" id="chGo">Continue</button></div>`;$('#chGo').focus({preventScroll:true});$('#chGo').onclick=()=>finishChoice(ch);renderHand();markDirty()}}
-function applyGameChoice(ch,o){const M=S.maker;const res=S.applyFx(o.effects);
+  box.onclick=e=>{const b=e.target.closest('[data-cho]');if(!b||b.disabled)return;box.querySelectorAll('.chbtn').forEach(x=>x.disabled=true);const o=c.opts.find(x=>x.id===b.dataset.cho);const ap=applyGameChoice(ch,o);const res=ap.res;
+    $('#chCard').querySelector('.cho').outerHTML=`<p class="chout">${tagNames(esc(ap.outcome))}</p>${res.length?`<ul class="chfx">${res.map(r=>`<li>${tagNames(esc(r))}</li>`).join('')}</ul>`:''}<div class="chrow"><button type="button" class="btn primary" id="chGo">Continue</button></div>`;$('#chGo').focus({preventScroll:true});$('#chGo').onclick=()=>finishChoice(ch);renderHand();markDirty()}}
+function applyGameChoice(ch,o){const M=S.maker;const low=o.label.charAt(0).toLowerCase()+o.label.slice(1);const mine0=S.reach();const f0=mine0[0];const p0=f0?(S.capitalOf(f0)||f0.origin):{x:S.W/2,y:S.H/2};
+  // 1. the world may have moved since the card was shown: if the premise is gone, nothing is applied and nothing is spent
+  const chk=S.checkCard(ch.trigger,ch.card,o);
+  const voided=(msg,res)=>{S.log('cardvoid',1,'Your Word Comes Too Late',`${ch.card.title}: ${msg} You chose to ${low}, but it changes nothing, and it costs you nothing.`,p0.x,p0.y,f0?[f0]:[],{maker:true,why:[`Because you chose to ${low}, but the matter was already settled.`]});return{res:res||[msg],outcome:msg,voided:true}};
+  if(!chk.ok&&chk.stale!=='target')return voided(chk.msg||'The moment has passed.');
+  // 2. apply the effects: each one lands on a people that still exists, is logged as caused by this choice, and is followed up later
+  const ctx={cause:`chose to ${low}`,premise:ch.trigger?ch.trigger.why.replace(/^\d+: /,''):'',prem:ch.trigger?ch.trigger.prem:null,label:o.label};
+  const res=S.applyFx(o.effects,ctx);
+  const needsPeople=o.effects.some(x=>x&&!['greatness','mercy','doctrine'].includes(x.fx));
+  // every effect that needed a people failed (it died, or the world changed): report it and do not charge the Maker
+  if(needsPeople&&!ctx.okCount&&!o.effects.some(x=>x&&['greatness','mercy','doctrine'].includes(x.fx)))return voided(res[0]||chk.msg||'The moment has passed.',res);
   const g0=M.greatness,m0=M.mercy;S.applyLean(o.lean,o.cost);
   const dg=Math.round(M.greatness-g0),dm=Math.round(M.mercy-m0);if(dg)res.push(`${dg>0?'+':''}${dg} Greatness`);if(dm)res.push(`${dm>0?'+':''}${dm} Mercy`);
-  M.count++;M.deeds.push({yr:Math.floor(S.year),title:ch.card.title,choice:o.label,out:o.outcome});const mine=S.reach();const f=mine[0];const p=f?(S.capitalOf(f)||f.origin):{x:S.W/2,y:S.H/2};
-  S.log('choice',3,ch.card.title,`${ch.card.scene} You chose: ${o.label.toLowerCase()}. ${o.outcome}`,p.x,p.y,mine.slice(0,2),{why:[`The Maker chose to ${o.label.charAt(0).toLowerCase()+o.label.slice(1)}.`],maker:true,choice:o.label});return res}
+  M.count++;M.deeds.push({yr:Math.floor(S.year),title:ch.card.title,choice:o.label,out:o.outcome});
+  S.log('choice',3,ch.card.title,`${ch.card.scene} You chose: ${low}. ${o.outcome}`,p0.x,p0.y,mine0.slice(0,2),{why:[`Because you chose to ${low}.`].concat(ctx.premise?[`The trouble was: ${ctx.premise}`]:[]),maker:true,choice:o.label});
+  return{res,outcome:o.outcome||'It is done.',voided:false}}
 // ---------- the lead prophet calls ----------
 function openProphetCall(ch){const c=S.chars[ch.c];if(!c||!c.alive){finishChoice(ch);return}choiceOpen=true;const f=S.facs[c.fac];const box=$('#choice');box.hidden=false;const pw=S.maker.power;const T=S.cardTrigger(true)||{why:''};
   const plea=T.why?`${T.why.replace(/^\d+: /,'')} `:'';
@@ -1200,8 +1249,8 @@ function openProphetCall(ch){const c=S.chars[ch.c];if(!c||!c.alive){finishChoice
   const cp=$('#callPort');if(cp)portrait(cp,c.g,1,{noShadow:true,crown:c.role==='ruler'});
   box.onclick=e=>{const b=e.target.closest('[data-call]');if(!b||b.disabled)return;const k=b.dataset.call;const M=S.maker;
     if(k==='speak'){finishChoice(ch);c.visN=0;openVision(c.id);return}
-    if(k==='sign'){S.nudgeMeters(6,-3);S.applyFx([{fx:'faith',people:f.name,amount:0.08}]);M.deeds.push({yr:Math.floor(S.year),title:`${cap(S.cname(c))} called`,choice:'a sign',out:'Lights over the temple.'});S.log('choice',2,`A Sign for ${cap(S.cname(c))}`,`${cap(S.cname(c))} called to the Maker, and the sky over the temple burned with light. The faithful took it as an answer.`,(S.capitalOf(f)||f.origin).x,(S.capitalOf(f)||f.origin).y,[f],{maker:true})}
-    else{S.nudgeMeters(-2,-1);S.applyFx([{fx:'faith',people:f.name,amount:-0.04}]);S.log('choice',1,`Silence for ${cap(S.cname(c))}`,`${cap(S.cname(c))} called to the Maker and heard nothing. Some began to doubt.`,(S.capitalOf(f)||f.origin).x,(S.capitalOf(f)||f.origin).y,[f],{maker:true})}
+    if(k==='sign'){S.nudgeMeters(6,-3);S.applyFx([{fx:'faith',people:f.name,amount:0.08}],{cause:`sent a sign to ${cap(S.cname(c))}`});M.deeds.push({yr:Math.floor(S.year),title:`${cap(S.cname(c))} called`,choice:'a sign',out:'Lights over the temple.'});S.log('choice',2,`A Sign for ${cap(S.cname(c))}`,`${cap(S.cname(c))} called to the Maker, and the sky over the temple burned with light. The faithful took it as an answer.`,(S.capitalOf(f)||f.origin).x,(S.capitalOf(f)||f.origin).y,[f],{maker:true})}
+    else{S.nudgeMeters(-2,-1);S.applyFx([{fx:'faith',people:f.name,amount:-0.04}],{cause:`stayed silent when ${cap(S.cname(c))} called`});S.log('choice',1,`Silence for ${cap(S.cname(c))}`,`${cap(S.cname(c))} called to the Maker and heard nothing. Some began to doubt.`,(S.capitalOf(f)||f.origin).x,(S.capitalOf(f)||f.origin).y,[f],{maker:true})}
     finishChoice(ch);renderHand();markDirty()}}
 // ---------- the vision: a conversation that steers a nation ----------
 let visC=null,visBusy=false;
@@ -1214,9 +1263,11 @@ function renderVision(){const c=S.chars[visC];if(!c){closeVision();return}const 
   <form class="vform" id="visForm"><textarea id="visIn" maxlength="500" placeholder="${(c.visN||0)>=5?'The vision is fading.':'Speak to '+esc(cap(S.cname(c)))+'…'}" ${visBusy||(c.visN||0)>=5?'disabled':''}></textarea><button type="submit" class="btn primary" ${visBusy||(c.visN||0)>=5?'disabled':''}>Speak</button></form><div class="chpow">${5-(c.visN||0)} words left before the vision fades</div>`;
   const pc=$('#visPort');if(pc)portrait(pc,c.g,1,{noShadow:true,crown:c.role==='ruler'});const lg=$('#visLog');lg.scrollTop=lg.scrollHeight;
   $('#visForm').onsubmit=e=>{e.preventDefault();const t=$('#visIn').value.trim();if(t)visionSpeak(c.id,t)};$('#visIn').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('#visForm').requestSubmit()}});if(!visBusy&&pw>=10)$('#visIn').focus({preventScroll:true})}
+function liveFor(fid){const f=S.facs[fid];if(!f)return[];return S.liveSituations().filter(x=>x.people===f.name||x.enemy===f.name).sort((a,b)=>b.sev-a.sev).slice(0,3)}
 const HUMAN_FX=['war','peace','ally','mission','persecute','gov','migrate','values','ruler','depose','cult','faith','champion','bless_army'];
 function visionPrompt(c,b,text,hist){return`You are ${b.name}, ${b.isRuler?'ruler and high priest':'prophet'} of the ${b.people} (${b.body}), year ${b.year}, in an invented world. You worship the Maker, the immortal who made your kind, whom your people call ${b.word}. The Maker is known as: ${b.standing}. The Maker is speaking to you in a vision, which is rare and overwhelming.
 Your faith: ${b.faith}. Commandments: ${b.tenets.join(' ')}. Your temperament: ${b.traits.join(', ')||'steady'}; devotion ${Math.round(b.piety*100)}/100. Your people: ${b.gov}${b.ruler&&!b.isRuler?`, ruled by ${b.ruler}`:''}. Wars: ${b.wars.join(', ')||'none'}. Neighbours: ${b.neighbours.join('; ')||'none near'}. Recent: ${b.recent.join('; ')||'quiet years'}.
+HAPPENING RIGHT NOW (live, year ${b.year}; the Maker may be answering exactly this): ${liveFor(c.fac).map(x=>x.why).join(' | ')||'nothing urgent'}. Everything above is current: do not treat any of it as past.
 ${hist?`The vision so far:\n${hist}\n`:''}THE MAKER SAYS: "${text}"
 
 Answer as yourself in 1-4 sentences: awed, devoted, but with your own judgement. You may ask for clarity, plead for your people, or warn of a cost, but you are the Maker's voice and you will carry out clear commands. Never mention games or numbers.
@@ -1231,9 +1282,10 @@ function fallbackVision(b,text){const t=text.toLowerCase();const acts=[];const n
 async function visionSpeak(cid,text){const c=S.chars[cid];if(visBusy||(c.visN||0)>=5)return;c.visN=(c.visN||0)+1;c.convo=c.convo||[];const hist=c.convo.slice(-8).map(m=>`${m.from==='you'?'THE MAKER':'YOU'}: ${m.text}`).join('\n');c.convo.push({from:'you',text,yr:Math.floor(S.year)});visBusy=true;renderVision();
   const b=S.contactBrief(cid);let res=null;if(sampleFn){try{res=await sampleFn.json(visionPrompt(c,b,text,hist),{cache:false})}catch(e){if(e&&['not_granted','capability_disabled','capability_removed'].includes(e.code))sampleFn=null}}
   if(!res||typeof res.reply!=='string')res=fallbackVision(b,text);const acts=(Array.isArray(res.acts)?res.acts:[]).filter(x=>x&&HUMAN_FX.includes(x.fx));
-  const done=S.prophetDecrees(cid,acts);if(res.tone==='mighty')S.nudgeMeters(5,-4);else if(res.tone==='gentle')S.nudgeMeters(-4,5);
+  const lv=liveFor(c.fac)[0];if(!c.alive){c.convo.push({from:'them',text:'(no answer: the voice has fallen silent)',yr:Math.floor(S.year),done:[]});visBusy=false;if(visC===cid)renderVision();return}
+  const done=S.prophetDecrees(cid,acts,lv?{text:lv.why,prem:lv.prem}:null);if(res.tone==='mighty')S.nudgeMeters(5,-4);else if(res.tone==='gentle')S.nudgeMeters(-4,5);
   c.convo.push({from:'them',text:String(res.reply).slice(0,900),yr:Math.floor(S.year),done});const f=S.facs[c.fac];const at0=S.capitalOf(f)||f.origin;
-  S.log('decree',done.length?3:1,`${cap(S.cname(c))} Speaks for the Maker`,`${cap(S.cname(c))} tells the ${f.name} that the Maker has spoken: "${text.slice(0,180)}"${done.length?' '+done.join(' '):''}`,at0.x,at0.y,[f],{char:c.id,maker:true,why:['The Maker spoke in a vision.']});
+  S.log('decree',done.length?3:1,`${cap(S.cname(c))} Speaks for the Maker`,`${cap(S.cname(c))} tells the ${f.name} that the Maker has spoken: "${text.slice(0,180)}"${done.length?' '+done.join(' '):''}`,at0.x,at0.y,[f],{char:c.id,maker:true,why:[`Because you spoke to ${cap(S.cname(c))}.`]});
   S.maker.deeds.push({yr:Math.floor(S.year),title:`A vision for ${cap(S.cname(c))}`,choice:`said: "${text.slice(0,80)}"`,out:done.join(' ')||'They listened.'});visBusy=false;if(visC===cid)renderVision();renderHand();markDirty()}
 // ---------- the HUD ----------
 renderHand=function(){const el=$('#hand');if(!el||!S||!S.maker||!S.myPeoples)return;const M=S.maker;const mine=S.reach();const gods=S.godInfo().filter(g=>g.alive);
