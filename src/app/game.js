@@ -1,8 +1,8 @@
 import { connectGame } from '../ai';
 import { b64ToU8, restoreSim, snapshotSim, taToB64 } from '../sim/persist.js';
 import { makeSim } from '../sim/sim.js';
-import { buildTerrainCanvas, drawBeast, drawCreature, drawGroundDetail, drawRuin, drawTown, drawWonder, portrait } from '../render/draw.js';
-import { ARCH, CONCEPTS, CTRAITS, CTRAIT_WORD, GLOSS, TECH, TRAITS, TRAIT_LABEL, VALUES, VALUE_LABEL, bodyDesc, cap, clamp, creatureGenome, lerp, mulberry32 } from '../sim/data.js';
+import { texScale, buildTerrainCanvas, drawBeast, drawCreature, drawGroundDetail, drawRuin, drawTown, drawWonder, portrait } from '../render/draw.js';
+import { WORLD_SIZES, DEFAULT_WORLD_SIZE, ARCH, CONCEPTS, CTRAITS, CTRAIT_WORD, GLOSS, TECH, TRAITS, TRAIT_LABEL, VALUES, VALUE_LABEL, bodyDesc, cap, clamp, creatureGenome, lerp, mulberry32 } from '../sim/data.js';
 import { SCRIPT_INFO, writeScript } from '../sim/scripts.js';
 
 // ================= APP =================
@@ -19,9 +19,10 @@ const techTier=f=>S.milTier(f)*1.5;
 const BODY=0.34;
 
 function newWorld(seed,P,creation,placeholder){
-  S=P?restoreSim(P.sim,makeSim):makeSim(seed,creation?{creation}:{});S.onEvent=onEvent;
+  S=P?restoreSim(P.sim,makeSim):makeSim(seed,creation?{creation,size:creation.size}:{});S.onEvent=onEvent;
   terrainC=buildTerrainCanvas(S);
-  marksC=document.createElement('canvas');marksC.width=S.W;marksC.height=S.H;marksX=marksC.getContext('2d');
+  // layer canvases are capped near Standard's pixel count (texScale<1 on bigger worlds); marks are drawn in world units through a scale transform
+  const ts=texScale(S);marksC=document.createElement('canvas');marksC.width=Math.round(S.W*ts);marksC.height=Math.round(S.H*ts);marksX=marksC.getContext('2d');marksX.setTransform(ts,0,0,ts,0,0);
   terrC=document.createElement('canvas');terrC.width=S.W/8;terrC.height=S.H/8;terrX=terrC.getContext('2d');
   radC=document.createElement('canvas');radC.width=S.GW;radC.height=S.GH;radX=radC.getContext('2d');
   const rr=mulberry32(seed+5);const sy=['Ka','Ve','Or','Thu','Mo','Ash','Ul','Sy','Dra','Ib','Xo','Pha','Lu'],en=['rim','thas','olon','ekka','uun','ria','gard','mere','vane'];
@@ -87,24 +88,30 @@ function drainFx(){
 }
 
 // ---------- render ----------
+const DOTS=[new Array(360),new Array(360)];// cached fill strings for far-away creatures (no per-frame string churn)
+function dotFill(h,flash){const k=((Math.round(h)%360)+360)%360,t=DOTS[flash?1:0];return t[k]||(t[k]=hsl(k,55,flash?85:58))}
 const WORK_STATES={farm:1,craft:1,build:1,study:1,worship:1,gather:1};
 function render(rdt){
   const dpr=Math.min(2,window.devicePixelRatio||1);const w=vw(),h=vh();if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
   if(fly){fly.t=Math.min(1,fly.t+rdt*1.4);const e=1-Math.pow(1-fly.t,3);cam.x=lerp(fly.sx,fly.x,e);cam.y=lerp(fly.sy,fly.y,e);cam.z=lerp(fly.sz,fly.z,e);if(fly.t>=1)fly=null}
   if(follow&&sel&&!sel.dead){cam.x+=(sel.x-cam.x)*Math.min(1,rdt*4);cam.y+=(sel.y-cam.y)*Math.min(1,rdt*4)}
   clampCam();const Z=cam.z;
-  if(S.terrainDirty){terrainC=buildTerrainCanvas(S);S.terrainDirty=false;updRad()}
+  if(S.terrainDirty){terrainC=buildTerrainCanvas(S,terrainC,S.dirtyBox);S.terrainDirty=false;S.dirtyBox=null;updRad()}
+  if(S.radDirty){S.radDirty=false;updRad()}
   if(frameN%90===0)updRad();
   ctx.setTransform(1,0,0,1,0,0);ctx.fillStyle='#0b0e14';ctx.fillRect(0,0,cv.width,cv.height);
   const z=Z*dpr;ctx.setTransform(z,0,0,z,w*dpr/2-cam.x*z,h*dpr/2-cam.y*z);ctx.imageSmoothingEnabled=true;
-  ctx.drawImage(terrainC,0,0,S.W,S.H);
-  ctx.globalAlpha=0.9;ctx.drawImage(radC,0,0,S.W,S.H);ctx.globalAlpha=1;
+  // only the visible part of each full-world layer is blitted (source-rect crop), so cost follows the viewport, not the world
+  const vx0=Math.max(0,cam.x-w/2/Z-4),vx1=Math.min(S.W,cam.x+w/2/Z+4),vy0=Math.max(0,cam.y-h/2/Z-4),vy1=Math.min(S.H,cam.y+h/2/Z+4);
+  const layer=im=>{if(vx1<=vx0||vy1<=vy0)return;const kx=im.width/S.W,ky=im.height/S.H;ctx.drawImage(im,vx0*kx,vy0*ky,(vx1-vx0)*kx,(vy1-vy0)*ky,vx0,vy0,vx1-vx0,vy1-vy0)};
+  layer(terrainC);
+  if(radAny){ctx.globalAlpha=0.9;layer(radC);ctx.globalAlpha=1}
   if(frameN%15===0){terrX.clearRect(0,0,terrC.width,terrC.height);for(const s of S.setts){const f=S.facs[s.fac];const rr=(S.townRadius(s)+70)/8;const g=terrX.createRadialGradient(s.x/8,s.y/8,0,s.x/8,s.y/8,rr);g.addColorStop(0,hsl(f.hue,70,55,0.55));g.addColorStop(0.75,hsl(f.hue,70,55,0.25));g.addColorStop(1,hsl(f.hue,70,55,0));terrX.fillStyle=g;terrX.beginPath();terrX.arc(s.x/8,s.y/8,rr,0,6.28);terrX.fill()}}
-  ctx.globalAlpha=Z>2.5?0.18:0.38;ctx.drawImage(terrC,0,0,S.W,S.H);ctx.globalAlpha=1;
+  ctx.globalAlpha=Z>2.5?0.18:0.38;layer(terrC);ctx.globalAlpha=1;
   const x0=cam.x-w/2/Z-30,x1=cam.x+w/2/Z+30,y0=cam.y-h/2/Z-30,y1=cam.y+h/2/Z+30;const inV=(x,y,m=0)=>x>x0-m&&x<x1+m&&y>y0-m&&y<y1+m;
   const visS=S.setts.filter(s=>inV(s.x,s.y,S.townRadius(s)+20));
   if(Z>2.2){const avoid=[];for(const s of visS){avoid.push({x:s.x,y:s.y,r:S.townRadius(s)+8});for(const p of s.plots)avoid.push({x:p.x,y:p.y,r:10})}drawGroundDetail(ctx,S,x0,y0,x1,y1,T,Z,avoid)}
-  ctx.drawImage(marksC,0,0,S.W,S.H);
+  layer(marksC);
   // trade roads worn by caravans
   ctx.lineCap='round';for(const k in S.roads){const r=S.roads[k];const a=S.settById(r.a),b=S.settById(r.b);if(!a||!b)continue;if(!inV((a.x+b.x)/2,(a.y+b.y)/2,Math.hypot(a.x-b.x,a.y-b.y)/2))continue;const age=S.year-r.last;const al=age<40?0.55:0.25;ctx.strokeStyle=`rgba(120,100,70,${al})`;ctx.lineWidth=Math.min(3.5,1+r.n*0.06);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke()}
   for(const r of S.ruins)if(inV(r.x,r.y,40))drawRuin(ctx,r);
@@ -114,12 +121,14 @@ function render(rdt){
   for(const s of visS)drawTown(ctx,s,S.facs[s.fac],T,Z);
   for(const wd of S.wonders)if(inV(wd.x,wd.y,20))drawWonder(ctx,wd,S.facs[wd.fac],T,Z);
   if(selSett&&S.setts.includes(selSett)){ctx.strokeStyle='#f0c873';ctx.lineWidth=2/Z;ctx.setLineDash([4/Z,3/Z]);ctx.beginPath();ctx.arc(selSett.x,selSett.y,S.townRadius(selSett)+12,0,6.28);ctx.stroke();ctx.setLineDash([])}
-  for(const g of S.game)if(!g.dead&&inV(g.x,g.y))drawBeast(ctx,g,Z,T);
+  if(Z>=0.5)for(const g of S.game)if(!g.dead&&inV(g.x,g.y))drawBeast(ctx,g,Z,T);// under a pixel when zoomed far out
   // army standards
   for(const f of S.facs){const A=f.army;if(!A||f.died!=null||!inV(A.x,A.y,30))continue;ctx.strokeStyle='#2a2216';ctx.lineWidth=0.8;ctx.beginPath();ctx.moveTo(A.x,A.y+6);ctx.lineTo(A.x,A.y-12);ctx.stroke();ctx.fillStyle=hsl(f.hue,70,48);ctx.beginPath();ctx.moveTo(A.x,A.y-12);ctx.lineTo(A.x+9,A.y-10+Math.sin(T*4)*0.8);ctx.lineTo(A.x,A.y-7);ctx.closePath();ctx.fill()}
   // creatures
   for(const a of S.agents){if(a.dead||!inV(a.x,a.y))continue;const f=S.facs[a.fac];const child=a.age<8&&!a.titan?0.5+a.age/16:1;const r=a.r*child*BODY;const sr=r*Z;
-    if(sr<2.2&&!a.titan){ctx.fillStyle=hsl(a.g.hue,55,a.flash>0?85:58);ctx.beginPath();ctx.arc(a.x,a.y,Math.max(r*0.9,1.3/Z),0,6.28);ctx.fill();if(a.char!=null){ctx.strokeStyle='#f0c873';ctx.lineWidth=1/Z;ctx.stroke()}continue}
+    if(sr<2.2&&!a.titan){ctx.fillStyle=dotFill(a.g.hue,a.flash>0);const dr=Math.max(r*0.9,1.3/Z);
+      if(sr<1.1&&a.char==null){ctx.fillRect(a.x-dr,a.y-dr,dr*2,dr*2);continue}// tiny when zoomed far out: a square is much cheaper than an arc path
+      ctx.beginPath();ctx.arc(a.x,a.y,dr,0,6.28);ctx.fill();if(a.char!=null){ctx.strokeStyle='#f0c873';ctx.lineWidth=1/Z;ctx.stroke()}continue}
     ctx.save();ctx.translate(a.x,a.y);ctx.rotate(a.heading);
     const c=a.char!=null?S.chars[a.char]:null;
     drawCreature(ctx,a.g,r,T,{moving:a.moving,phase:a.phase,seed:a.id%17,tech:techTier(f),carry:a.carry,banner:a.role==='soldier',bannerHue:f.hue,crown:!!(a.titan||(c&&c.role==='ruler')),flash:a.flash,fighting:a.state==='fight',noShadow:sr<4,job:a.role==='trader'?'trader':a.role==='soldier'?null:a.job,working:!!WORK_STATES[a.state]});
@@ -143,7 +152,8 @@ function render(rdt){
   if(Z>1.4)for(const a of S.agents){if(a.dead||!(a.titan||(a.char!=null&&['ruler','general','champion'].includes(S.chars[a.char].role)))||!inV(a.x,a.y))continue;const [sx,sy]=toS(a.x,a.y-a.r*BODY*2.5);const nm=a.titan||S.cname(S.chars[a.char]);ctx.font=`600 ${a.titan?13:11}px Grenze, Georgia, serif`;ctx.strokeStyle='rgba(8,10,14,.9)';ctx.lineWidth=3;ctx.strokeText(nm,sx,sy-4);ctx.fillStyle=a.titan?'#f4a896':'#f0c873';ctx.fillText(nm,sx,sy-4)}
   for(const wd of S.wonders){if(Z<1.6||!inV(wd.x,wd.y))continue;const [sx,sy]=toS(wd.x,wd.y+14);ctx.font='italic 600 11px Grenze, Georgia, serif';ctx.strokeStyle='rgba(8,10,14,.85)';ctx.lineWidth=3;ctx.strokeText(cap(wd.name),sx,sy);ctx.fillStyle='#f0c873';ctx.fillText(cap(wd.name),sx,sy)}
 }
-function updRad(){const id=radX.createImageData(S.GW,S.GH);for(let k=0;k<S.rad.length;k++){const v=S.rad[k];if(v<=0.02)continue;id.data[k*4]=48;id.data[k*4+1]=52+v*30;id.data[k*4+2]=36;id.data[k*4+3]=Math.min(235,v*260)}radX.putImageData(id,0,0)}
+let radAny=true;
+function updRad(){radAny=false;for(let k=0;k<S.rad.length;k++)if(S.rad[k]>0.02){radAny=true;break}if(!radAny){radX.clearRect(0,0,S.GW,S.GH);return}const id=radX.createImageData(S.GW,S.GH);for(let k=0;k<S.rad.length;k++){const v=S.rad[k];if(v<=0.02)continue;id.data[k*4]=48;id.data[k*4+1]=52+v*30;id.data[k*4+2]=36;id.data[k*4+3]=Math.min(235,v*260)}radX.putImageData(id,0,0)}
 
 // ---------- peoples panel ----------
 let openFac=null,lastPeoplesHTML='';const portraitCanvases=new Map();
@@ -350,7 +360,7 @@ function frame(now){
   const blocked=bookOpen||chapterOpen||choiceOpen||introOn||actOpen||!$('#create').hidden||!$('#worlds').hidden||!$('#defeat').hidden;
   if(S.maker&&S.maker.defeated&&!saga.defeatShown&&!blocked)showDefeat();
   if(running&&!blocked&&skipping){const t0=performance.now();while(performance.now()-t0<45){S.step(1/4);if(saga.pending||saga.choice)break}simAcc=0}
-  else if(running&&!blocked&&!saga.choice){simAcc+=rdt*effSpeed*YPS;const dt=effSpeed<=1.2?1/20:effSpeed<=5?1/12:effSpeed<=45?1/6:1/4;const t0=performance.now();while(simAcc>=dt){S.step(dt);simAcc-=dt;if(saga.pending||saga.choice){simAcc=0;break}if(performance.now()-t0>22){simAcc=0;break}}}
+  else if(running&&!blocked&&!saga.choice){simAcc+=rdt*effSpeed*YPS;const dt=effSpeed<=1.2?1/20:effSpeed<=5?1/12:effSpeed<=(S.cap>1000?10:45)?1/6:1/4;const t0=performance.now();while(simAcc>=dt){S.step(dt);simAcc-=dt;if(saga.pending||saga.choice){simAcc=0;break}if(performance.now()-t0>22){simAcc=0;break}}}
   if(!blocked&&saga.choice)openChoice(saga.choice);
   else if(!blocked&&saga.pending)openChapter();
   CURYEAR=S.year;
@@ -796,7 +806,7 @@ function sagaRestore(P){
 
 // ---------- replay ----------
 function replayData(forExport){
-  const img=document.createElement('canvas');const sc=forExport?0.5:0.5;img.width=S.W*sc;img.height=S.H*sc;const x=img.getContext('2d');x.drawImage(terrainC,0,0,img.width,img.height);
+  const img=document.createElement('canvas');const sc=Math.min(0.5,1200/S.W);img.width=S.W*sc;img.height=S.H*sc;const x=img.getContext('2d');x.drawImage(terrainC,0,0,img.width,img.height);
   if(forExport)x.drawImage(radC,0,0,img.width,img.height);
   return{W:S.W,H:S.H,img:forExport?img.toDataURL('image/jpeg',0.82):img,end:Math.floor(S.year),
     facs:S.facs.map(f=>({n:f.name,h:Math.round(f.hue),b:f.born,d:f.died})),frames:rec.frames,
@@ -805,6 +815,7 @@ function replayData(forExport){
     chapters:saga.ch.map(c=>[c.a,c.b,(c.parsed&&c.parsed.title)||('Chapter '+c.n)])};
 }
 function ReplayPlayer(root,D){
+  const KW=Math.max(1,D.W/2400);// world-unit marker sizes grow with the map so they stay readable
   root.innerHTML='';const wrap=document.createElement('div');wrap.style.cssText='position:relative;border-radius:8px;overflow:hidden;background:#0b0e14';root.appendChild(wrap);
   const cv=document.createElement('canvas');cv.style.cssText='display:block;width:100%;aspect-ratio:'+D.W+'/'+D.H;wrap.appendChild(cv);
   const cap=document.createElement('div');cap.style.cssText='position:absolute;left:10px;bottom:10px;right:10px;color:#f0e6c8;font:600 14px Georgia,serif;text-shadow:0 1px 3px #000;pointer-events:none';wrap.appendChild(cap);
@@ -824,8 +835,8 @@ function ReplayPlayer(root,D){
   function draw(){const w=cv.clientWidth,h=Math.round(w*D.H/D.W),dpr=Math.min(2,window.devicePixelRatio||1);if(cv.width!==Math.round(w*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}const x=cv.getContext('2d');const s=w/D.W*dpr;x.setTransform(1,0,0,1,0,0);x.fillStyle='#0b0e14';x.fillRect(0,0,cv.width,cv.height);
     if(img&&(img.complete===undefined||img.complete))x.drawImage(img,0,0,cv.width,cv.height);x.setTransform(s,0,0,s,0,0);
     const F=frameAt(y);
-    for(const r of D.ruins){if(r[2]>y)continue;if(r[3]){const g=x.createRadialGradient(r[0],r[1],0,r[0],r[1],90);g.addColorStop(0,'rgba(10,10,8,.75)');g.addColorStop(1,'rgba(10,10,8,0)');x.fillStyle=g;x.beginPath();x.arc(r[0],r[1],90,0,6.28);x.fill()}const v=3/s*dpr;x.strokeStyle='rgba(200,190,175,.6)';x.lineWidth=v*0.5;x.beginPath();x.moveTo(r[0]-v,r[1]-v);x.lineTo(r[0]+v,r[1]+v);x.moveTo(r[0]+v,r[1]-v);x.lineTo(r[0]-v,r[1]+v);x.stroke()}
-    for(const st of F.s){const f=D.facs[st[2]];const rr=70+st[3]*28;const g=x.createRadialGradient(st[0],st[1],0,st[0],st[1],rr);g.addColorStop(0,'hsla('+f.h+',70%,55%,.5)');g.addColorStop(1,'hsla('+f.h+',70%,55%,0)');x.fillStyle=g;x.beginPath();x.arc(st[0],st[1],rr,0,6.28);x.fill()}
+    for(const r of D.ruins){if(r[2]>y)continue;if(r[3]){const g=x.createRadialGradient(r[0],r[1],0,r[0],r[1],90*KW);g.addColorStop(0,'rgba(10,10,8,.75)');g.addColorStop(1,'rgba(10,10,8,0)');x.fillStyle=g;x.beginPath();x.arc(r[0],r[1],90*KW,0,6.28);x.fill()}const v=3/s*dpr;x.strokeStyle='rgba(200,190,175,.6)';x.lineWidth=v*0.5;x.beginPath();x.moveTo(r[0]-v,r[1]-v);x.lineTo(r[0]+v,r[1]+v);x.moveTo(r[0]+v,r[1]-v);x.lineTo(r[0]-v,r[1]+v);x.stroke()}
+    for(const st of F.s){const f=D.facs[st[2]];const rr=(70+st[3]*28)*KW;const g=x.createRadialGradient(st[0],st[1],0,st[0],st[1],rr);g.addColorStop(0,'hsla('+f.h+',70%,55%,.5)');g.addColorStop(1,'hsla('+f.h+',70%,55%,0)');x.fillStyle=g;x.beginPath();x.arc(st[0],st[1],rr,0,6.28);x.fill()}
     const u=1/s*dpr;for(const st of F.s){const f=D.facs[st[2]];x.fillStyle='hsl('+f.h+',60%,62%)';x.strokeStyle='#0b0e14';x.lineWidth=1.2*u;x.beginPath();x.arc(st[0],st[1],(2.5+st[3]*1.3)*u,0,6.28);x.fill();x.stroke()}
     for(const a of F.a){const f=D.facs[a[2]];x.fillStyle='hsl('+f.h+',75%,50%)';x.beginPath();x.moveTo(a[0],a[1]-6*u);x.lineTo(a[0]+5*u,a[1]+4*u);x.lineTo(a[0]-5*u,a[1]+4*u);x.closePath();x.fill();x.strokeStyle='#000';x.lineWidth=1*u;x.stroke()}
     const big={};for(const st of F.s){if(!big[st[2]]||st[3]>big[st[2]][3])big[st[2]]=st}x.textAlign='center';x.font='600 '+(13*u)+'px Georgia,serif';x.lineJoin='round';for(const id in big){const st=big[id];const f=D.facs[id];x.strokeStyle='rgba(8,10,14,.9)';x.lineWidth=3.5*u;x.strokeText(f.n,st[0],st[1]-9*u);x.fillStyle='hsl('+f.h+',70%,80%)';x.fillText(f.n,st[0],st[1]-9*u)}
@@ -898,8 +909,8 @@ async function cloudPut(meta,blob){
 async function cloudGet(meta){const parts=[];for(let k=0;k<meta.chunks;k++){const d=await CLOUD.col.doc(`${meta.id}_${meta.ver}_${k}`).get();if(!d.exists)return null;parts.push(d.data().d)}return parts.join('')}
 async function cloudDel(id){const idx=await cloudIndex();const w=idx.find(x=>x.id===id);if(!w)return;await CLOUD.col.doc('index').set({worlds:idx.filter(x=>x.id!==id)});for(let k=0;k<w.chunks;k++)CLOUD.col.doc(`${w.id}_${w.ver}_${k}`).delete().catch(()=>{})}
 // ---- what a save holds ----
-function marksSmall(){try{const c=document.createElement('canvas');c.width=S.W/2;c.height=S.H/2;c.getContext('2d').drawImage(marksC,0,0,c.width,c.height);return c.toDataURL('image/webp',0.7)}catch(e){return null}}
-function saveMeta(){const k=S.heroFac?S.heroFac():null;return{id:SAVE.id,title:worldTitle,seed:S.seed,year:Math.floor(S.year),age:saga.on?saga.ch.length+(saga.ended?0:1):0,ended:!!saga.ended,alive:S.alive().length,lead:k?k.name:'',savedAt:Date.now(),endless:!saga.target}}
+function marksSmall(){try{const c=document.createElement('canvas');c.width=Math.min(S.W/2,1200);c.height=c.width*S.H/S.W;c.getContext('2d').drawImage(marksC,0,0,c.width,c.height);return c.toDataURL('image/webp',0.7)}catch(e){return null}}
+function saveMeta(){const k=S.heroFac?S.heroFac():null;return{id:SAVE.id,title:worldTitle,seed:S.seed,size:S.size||'standard',year:Math.floor(S.year),age:saga.on?saga.ch.length+(saga.ended?0:1):0,ended:!!saga.ended,alive:S.alive().length,lead:k?k.name:'',savedAt:Date.now(),endless:!saga.target}}
 function buildSave(){return{v:1,meta:saveMeta(),sim:snapshotSim(S),saga:{...saga,ch:saga.ch.map(c=>({...c}))},rec,cam:{x:cam.x,y:cam.y,z:cam.z},speed,chronFilter,marks:marksSmall(),chapterOpen:!!chapterOpen}}
 async function saveNow(cloudToo){
   if(!S||SAVE.busy||SAVE.suspended||!SAVE.id)return;if(S.year<12&&!saga.ch.length)return;SAVE.busy=true;
@@ -932,7 +943,7 @@ async function deleteWorld(id){await IDB.del('w:'+id);const idx=((await IDB.get(
 let worldsWasRunning=true;
 async function renderWorlds(first){const box=$('#wlist');if(!box)return;const list=await listWorlds();
   const cur=SAVE.id;$('#wsub').textContent=list.length?(first?'Pick up where you left off, or begin again.':'Worlds are saved as you watch them.'):'No saved worlds yet. Worlds save themselves as you watch.';
-  box.innerHTML=list.map((w,i)=>`<div class="wcardx${w.id===cur?' cur':''}"><div class="wmain"><b>The world of ${esc(w.title)}</b><div class="d">Year ${w.year}${w.age?` · ${w.ended?'ended':'Age '+ROMAN[w.age]}`:''} · ${w.alive} ${w.alive===1?'people':'peoples'} living${w.lead?` · the ${esc(w.lead)}`:''}</div><div class="d">Saved ${ago(w.savedAt)}${w.cloud?' · in your account':' · on this device'}</div></div><div class="wbtns">${w.id===cur?'<span class="d">playing now</span>':`<button type="button" class="btn${i===0&&first?' primary':''}" data-wload="${w.id}">${i===0&&first?'Continue':'Open'}</button><button type="button" class="btn ghost" data-wdel="${w.id}" aria-label="Delete the world of ${esc(w.title)}">Delete</button>`}</div></div>`).join('');
+  box.innerHTML=list.map((w,i)=>`<div class="wcardx${w.id===cur?' cur':''}"><div class="wmain"><b>The world of ${esc(w.title)}</b><div class="d">${esc((WORLD_SIZES[w.size||'standard']||WORLD_SIZES.standard).label)} world · Year ${w.year}${w.age?` · ${w.ended?'ended':'Age '+ROMAN[w.age]}`:''} · ${w.alive} ${w.alive===1?'people':'peoples'} living${w.lead?` · the ${esc(w.lead)}`:''}</div><div class="d">Saved ${ago(w.savedAt)}${w.cloud?' · in your account':' · on this device'}</div></div><div class="wbtns">${w.id===cur?'<span class="d">playing now</span>':`<button type="button" class="btn${i===0&&first?' primary':''}" data-wload="${w.id}">${i===0&&first?'Continue':'Open'}</button><button type="button" class="btn ghost" data-wdel="${w.id}" aria-label="Delete the world of ${esc(w.title)}">Delete</button>`}</div></div>`).join('');
   box._list=list}
 function openWorlds(first){worldsWasRunning=running;running=false;$('#worlds').hidden=false;SAVE.suspended=!!first;renderWorlds(first)}
 function closeWorlds(){$('#worlds').hidden=true;if(SAVE.id==null){beginNewWorld();return}SAVE.suspended=false;running=worldsWasRunning||running;$('#play').textContent=running?'Pause':'Resume'}
@@ -1022,16 +1033,19 @@ function introFrame(now){const cv2=$('#introCv');const dpr=Math.min(2,devicePixe
 const FORMS=[['Nimble and clever','small, quick, many-fingered'],['Shelled and strong','plated, many-legged, hard to kill'],['Tide-born','glowing swimmers of the shallows'],['Winged','light gliders with keen eyes']];
 const TEMPS=[['gentle','Gentle'],['curious','Curious'],['fierce','Fierce'],['devout','Devout']];
 const LANDS=[['coast','By the sea'],['plain','On open plains'],['forest','In deep forest'],['high','Below the mountains']];
-let CRE={form:0,temper:'curious',land:'coast',hue:190,rivals:2},creRAF=0;
+let CRE={form:0,temper:'curious',land:'coast',hue:190,rivals:2,size:DEFAULT_WORLD_SIZE},creRAF=0;
 function openCreation(){running=false;SAVE.suspended=true;$('#create').hidden=false;CRE.hue=Math.floor(Math.random()*360);
   $('#crForms').innerHTML=FORMS.map((f,i)=>`<button type="button" class="crf" data-crf="${i}" aria-pressed="${i===CRE.form}"><canvas data-crc="${i}"></canvas><b>${f[0]}</b><span>${f[1]}</span></button>`).join('');
   $('#crTemp').innerHTML=TEMPS.map(([k,l])=>`<button type="button" data-crt="${k}" aria-pressed="${k===CRE.temper}">${l}</button>`).join('');
   $('#crLand').innerHTML=LANDS.map(([k,l])=>`<button type="button" data-crl="${k}" aria-pressed="${k===CRE.land}">${l}</button>`).join('');
+  $('#crSize').innerHTML=Object.entries(WORLD_SIZES).map(([k,v])=>`<button type="button" data-crs="${k}" aria-pressed="${k===CRE.size}">${v.label}</button>`).join('');$('#crSizeD').textContent=sizeBlurb(CRE.size);
   $('#crHue').value=CRE.hue;cancelAnimationFrame(creRAF);creRAF=requestAnimationFrame(creFrame)}
+function sizeBlurb(k){const v=WORLD_SIZES[k];return v?`${v.label}: ${v.blurb}`:''}
 function creFrame(now){if($('#create').hidden)return;document.querySelectorAll('#crForms canvas').forEach(c=>{const i=+c.dataset.crc;const g=creatureGenome(i,CRE.temper);g.hue=CRE.hue;portrait(c,g,now/1000+i,{noShadow:true,moving:i===CRE.form})});creRAF=requestAnimationFrame(creFrame)}
 $('#create').addEventListener('click',e=>{const f=e.target.closest('[data-crf]'),t=e.target.closest('[data-crt]'),l=e.target.closest('[data-crl]');
   if(f){CRE.form=+f.dataset.crf;document.querySelectorAll('[data-crf]').forEach(x=>x.setAttribute('aria-pressed',x===f))}
   if(t){CRE.temper=t.dataset.crt;document.querySelectorAll('[data-crt]').forEach(x=>x.setAttribute('aria-pressed',x===t))}
+  const sz=e.target.closest('[data-crs]');if(sz){CRE.size=sz.dataset.crs;document.querySelectorAll('[data-crs]').forEach(x=>x.setAttribute('aria-pressed',x===sz));$('#crSizeD').textContent=sizeBlurb(CRE.size)}
   const rv=e.target.closest('[data-crr]');if(rv){CRE.rivals=+rv.dataset.crr;document.querySelectorAll('[data-crr]').forEach(x=>x.setAttribute('aria-pressed',x===rv))}
   if(l){CRE.land=l.dataset.crl;document.querySelectorAll('[data-crl]').forEach(x=>x.setAttribute('aria-pressed',x===l))}});
 $('#crHue').oninput=e=>{CRE.hue=+e.target.value};

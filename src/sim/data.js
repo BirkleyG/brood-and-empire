@@ -133,4 +133,12 @@ function bodyDesc(g){
 }
 
 
-export { ARCH, CONCEPTS, CTRAITS, CTRAIT_WORD, ERAS, GLOSS, GOVS, NUMW, PERSONAL, QUIRKS, RULES, TECH, TRAITS, TRAIT_LABEL, VALUES, VALUE_LABEL, archetypeOf, bodyDesc, cap, clamp, creatureGenome, gdist, hueDist, lerp, mulberry32, nEyes, nLimbs };
+// World size presets. Chosen at world creation and stored in the save as `size` (missing = 'standard').
+// W/H are in world units (tile = 20). cap = soft agent cap. To add a preset, add a row; nothing else is keyed on the names.
+const WORLD_SIZES={
+  standard:{label:'Standard',W:2400,H:1560,cap:520,blurb:'A small world, fast.'},
+  large:{label:'Large',W:4800,H:3120,cap:1500,blurb:'Four times the land: several continents, more peoples.'},
+  huge:{label:'Huge',W:7200,H:4680,cap:3500,blurb:'Nine times the land: oceans to cross, many nations. Slower.'},
+};
+const DEFAULT_WORLD_SIZE='large';
+export { WORLD_SIZES, DEFAULT_WORLD_SIZE, ARCH, CONCEPTS, CTRAITS, CTRAIT_WORD, ERAS, GLOSS, GOVS, NUMW, PERSONAL, QUIRKS, RULES, TECH, TRAITS, TRAIT_LABEL, VALUES, VALUE_LABEL, archetypeOf, bodyDesc, cap, clamp, creatureGenome, gdist, hueDist, lerp, mulberry32, nEyes, nLimbs };

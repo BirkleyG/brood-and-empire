@@ -136,18 +136,29 @@ function drawTool(c,job,hx,hr,r,t,o){
 }
 
 // ---------- terrain ----------
-function buildTerrainCanvas(S){
-  const c=document.createElement('canvas');c.width=S.W;c.height=S.H;const x=c.getContext('2d');
+// The terrain canvas is kept near Standard's pixel count: bigger worlds paint it at a lower scale (the close-up ground
+// detail is drawn live per visible tile, so nothing is lost when zoomed in).
+const texScale=S=>Math.min(1,2400/S.W);
+// Paint the whole terrain, or (when `prev` and a world-unit `box` are given) only the tiles inside the box.
+// Texture marks use a per-tile seeded RNG so a partial repaint matches a full one.
+function buildTerrainCanvas(S,prev,box){
+  const sc=texScale(S);const full=!(prev&&box&&prev.width===Math.round(S.W*sc));
+  const c=full?document.createElement('canvas'):prev;if(full){c.width=Math.round(S.W*sc);c.height=Math.round(S.H*sc)}const x=c.getContext('2d');
+  let i0=0,j0=0,i1=S.GW-1,j1=S.GH-1;
+  if(!full){i0=Math.max(0,Math.floor(box.x0/S.TS));j0=Math.max(0,Math.floor(box.y0/S.TS));i1=Math.min(S.GW-1,Math.floor(box.x1/S.TS));j1=Math.min(S.GH-1,Math.floor(box.y1/S.TS))}
   const sm=document.createElement('canvas');sm.width=S.GW;sm.height=S.GH;const sx=sm.getContext('2d');const id=sx.createImageData(S.GW,S.GH);
   for(let k=0;k<S.GW*S.GH;k++){const t=S.ter[k],h=S.hgt[k];const col=TCOL[t];const sh=t>=2?(h-0.5)*60:(h-0.3)*40;id.data[k*4]=clamp(col[0]+sh,0,255);id.data[k*4+1]=clamp(col[1]+sh,0,255);id.data[k*4+2]=clamp(col[2]+sh,0,255);id.data[k*4+3]=255}
-  sx.putImageData(id,0,0);x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';x.drawImage(sm,0,0,c.width,c.height);
-  const rr=mulberry32(S.seed+9);
-  for(let k=0;k<S.GW*S.GH;k++){const t=S.ter[k],i=k%S.GW,j=Math.floor(k/S.GW);const n=t===3?9:t===5?4:t===2?2:t===4?2:0;
+  sx.putImageData(id,0,0);x.save();x.setTransform(sc,0,0,sc,0,0);
+  if(!full){x.beginPath();x.rect(i0*S.TS,j0*S.TS,(i1-i0+1)*S.TS,(j1-j0+1)*S.TS);x.clip()}
+  x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';x.drawImage(sm,0,0,S.W,S.H);
+  for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++){const k=j*S.GW+i,t=S.ter[k];const n=t===3?9:t===5?4:t===2?2:t===4?2:0;if(!n)continue;
+    const rr=mulberry32((S.seed+9+k*7919)|0);
     for(let m=0;m<n;m++){const px=(i+rr())*S.TS,py=(j+rr())*S.TS;
       if(t===3){x.fillStyle='rgba(18,34,20,.55)';x.beginPath();x.arc(px,py,1.6+rr()*2.2,0,6.28);x.fill()}
       else if(t===5){x.strokeStyle='rgba(30,28,30,.45)';x.lineWidth=1;x.beginPath();x.moveTo(px-4,py+3);x.lineTo(px,py-4);x.lineTo(px+4,py+3);x.stroke();x.strokeStyle='rgba(230,230,235,.3)';x.beginPath();x.moveTo(px-1.2,py-2);x.lineTo(px,py-4);x.stroke()}
       else if(t===2){x.fillStyle='rgba(150,170,100,.16)';x.fillRect(px,py,1,2)}
       else if(t===4){x.fillStyle='rgba(60,45,25,.22)';x.fillRect(px,py,1.5,1.5)}}}
+  x.restore();
   return c;
 }
 function hash2(i,j,k){let h=(i*374761393+j*668265263+(k||0)*2147483647)|0;h=(h^(h>>>13))*1274126177|0;return((h^(h>>>16))>>>0)/4294967296}
@@ -222,7 +233,11 @@ function drawBuilding(c,b,f,t,z,s){
 function drawTown(c,s,f,t,z){
   const tr=S.townRadius(s);const h=Math.round(f.hue);
   c.fillStyle=`hsla(${h},14%,24%,.32)`;c.beginPath();c.arc(s.x,s.y,tr+6,0,6.28);c.fill();
-  for(const p of s.plots)drawPlot(c,p,z);
+  if(z<0.4){// zoomed far out: one small block per building, no plots/streets/sorting (each is under a pixel or two)
+    for(const b of s.bld){c.fillStyle=b.t==='den'?'#2a221c':b.t==='hut'?'#8f7748':roofCol(f,b);c.fillRect(b.x-3,b.y-3,6,6)}
+    if(s.atkT&&CURYEAR-s.atkT<1.5){c.strokeStyle='#cf5843';c.lineWidth=3;c.beginPath();c.arc(s.x,s.y,tr+9,0,6.28);c.stroke()}
+    return}
+  if(z>0.55)for(const p of s.plots)drawPlot(c,p,z);
   if(z>0.7)drawStreets(c,s,f,z);
   if(s.walls&&z>0.7)drawWalls(c,s,f);
   const bl=s.bld.slice().sort((a,b)=>a.y-b.y);for(const b of bl)drawBuilding(c,b,f,t,z,s);
@@ -252,4 +267,4 @@ function drawRuin(c,r){const rr=mulberry32(Math.round(r.x*31+r.y*17));c.save();c
   c.fillStyle=r.silent?'rgba(200,210,225,.12)':'rgba(20,18,16,.45)';c.beginPath();c.arc(0,0,10+r.lvl*5,0,6.28);c.fill();c.strokeStyle=r.silent?'rgba(210,220,235,.6)':'rgba(170,160,150,.55)';c.lineWidth=0.8;for(let k=0;k<5+r.lvl*4;k++){const a=rr()*6.28,d=rr()*(7+r.lvl*5);const x=Math.cos(a)*d,y=Math.sin(a)*d;c.beginPath();c.moveTo(x-2,y-1.5);c.lineTo(x+2,y-1.5);c.lineTo(x+2,y+1);c.stroke()}c.restore()}
 
 
-export { buildTerrainCanvas, drawBeast, drawCreature, drawGroundDetail, drawRuin, drawTown, drawWonder, portrait };
+export { texScale, buildTerrainCanvas, drawBeast, drawCreature, drawGroundDetail, drawRuin, drawTown, drawWonder, portrait };
