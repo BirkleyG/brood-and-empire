@@ -434,3 +434,10 @@ ul.pacts{font-family:var(--f-ui);font-size:13.5px;padding-left:18px;margin:6px 0
 .peek{position:fixed;z-index:90;width:240px;background:#17140f;border:1px solid #5c4a2a;border-radius:10px;padding:10px 12px;font-size:13px;color:#e8dcc0;box-shadow:0 10px 30px rgba(0,0,0,.6);display:grid;gap:3px}.peek[hidden]{display:none}.peek b{font-family:var(--f-disp);font-size:18px;font-weight:600}.peek .d{color:#a89c84;font-size:12px}.peek .mk{color:var(--brass2)}.peek .rv{color:#f0907a}
 .pn{cursor:pointer}.pn:hover{text-decoration:underline}.pn.town{font-weight:500;font-style:italic}
 .hdoc{display:flex;flex-wrap:wrap;gap:4px}.hdoc span{font-size:11px;border:1px solid #6c5a33;color:var(--brass2);border-radius:8px;padding:1px 7px;cursor:help}.homen{font-size:12px;color:#c8b8ff;cursor:help}
+
+/* decision cards: the premise line and the 'Maker listens' marker */
+.chprem{font-family:var(--f-book);font-size:15px;line-height:1.4;color:#e8d9b0;border-left:2px solid var(--brass);padding:2px 0 2px 10px;margin:6px 0 4px}
+.chprem i{display:block;font-style:normal;font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#a99a76;margin-top:3px}
+#listen{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:60;padding:7px 14px;border:1px solid var(--brass);border-radius:999px;background:rgba(18,14,8,.88);color:#f0c873;font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;pointer-events:none}
+#listen[hidden]{display:none}
+#listen .pulse{display:inline-block;vertical-align:middle;margin-right:6px}

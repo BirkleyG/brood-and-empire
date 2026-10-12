@@ -1005,6 +1005,7 @@ function makeSim(seed,opts={}){
     if(Y%2===0){const p={};for(const f of S.facs)if(f.died==null)p[f.id]=f.pop;S.pophist.push({yr:Y,p});if(S.pophist.length>700)S.pophist=S.pophist.filter((_,i)=>i%2===0)}
     S.pulses=S.pulses.filter(p=>S.year-p.t<3);
     if(S.finale)S.finaleTick();
+    S.followYear();
     if(S.onYear)S.onYear(Y);
   }
   function milestone(f,k,cond,title,text){if(cond&&!f.milestones[k]){f.milestones[k]=1;const s=facSetts(f)[0]||f.origin;log('mutation',2,title,text,s.x,s.y,[f],{why:['Generations of mutation, shaped by how they live.']})}}
@@ -1485,6 +1486,7 @@ function makeSim(seed,opts={}){
     const obey=clamp(0.35+c.traits.piety*0.6+(isRuler?0.1:0));c.convoN=(c.convoN||0)+1;reveal(f,0.02);
     for(const x of (acts||[]).slice(0,3)){if(!x||!x.type)continue;const need=['war','peace','gov','persecute'].includes(x.type)?obey:Math.max(obey,0.9);if(R()>need&&x.type!=='scripture'){done.push(`${cap(cname(c))} hesitated, and did not ${x.type==='war'?'go to war':x.type==='peace'?'make peace':'obey'}.`);continue}
       const tgt=x.target?alive().find(o=>o.name.toLowerCase()===String(x.target).toLowerCase().replace(/^the /,'')):null;
+      if(x.target&&!tgt&&['war','peace','mission'].includes(x.type)){const dead=facByName(x.target);done.push(dead?`The ${dead.name} are no more; your word comes too late.`:`${cap(cname(c))} could not find the ${String(x.target).replace(/^the /i,'')}.`);continue}
       if(x.type==='values'&&x.values){for(const k of DECREE_VALUES)if(isFinite(+x.values[k]))f.values[k]=clamp(f.values[k]+clamp(+x.values[k],-0.2,0.2));done.push(`${cap(FN(f))} take the words to heart.`)}
       else if(x.type==='war'&&tgt&&(isRuler||ru)&&tgt!==f&&!rel(f.id,tgt.id).war){if(isRuler||R()<0.5){declareWar(f,tgt,'holy',[`${cap(cname(c))} said the Maker commanded it.`]);done.push(`${cap(FN(f))} march on ${FN(tgt)}.`)}else done.push(`The throne would not go to war on a prophet's word.`)}
       else if(x.type==='peace'&&tgt&&rel(f.id,tgt.id).war){makePeace(f,tgt,[`${cap(cname(c))} carried the Maker's command for peace.`]);done.push(`Peace with ${FN(tgt)}.`)}
@@ -1495,7 +1497,8 @@ function makeSim(seed,opts={}){
       else if(x.type==='persecute'&&f.belief){let hit=0;for(const k in f.belief){const G=S.faiths[k];if(G&&!G.maker&&f.belief[k]>0.05){f.belief[k]*=0.5;hit++}}normBelief(f);if(F)shiftBelief(f,F.id,(f.belief[F.id]||0)+0.1);for(const s of facSetts(f))s.resent=Math.min(2,(s.resent||0)+0.3);if(hit)done.push(`The other temples of ${FN(f)} are closed.`)}
       else if(x.type==='temple'){const s=capitalOf(f);if(s){s.store+=20;f.values.faith=clamp(f.values.faith+0.08);if(!f.golden&&R()<0.4)f.golden=yr()}done.push(`A temple to ${makerWord(f)} rises in ${s?s.name:'their capital'}.`)}
       else if(x.type==='law'&&x.text){f.values.order=clamp(f.values.order+0.06);done.push(`A new law: ${String(x.text).slice(0,120)}`)}}
-    if(said){c.deeds.push({yr:yr(),txt:`spoke with the Maker`});log('decree',done.length?2:1,`${cap(cname(c))} Hears the Maker`,`${cap(cname(c))} of the ${f.name} says the Maker spoke to them: "${String(said).slice(0,180)}"${done.length?' '+done.join(' '):''}`,at0.x,at0.y,[f],{char:c.id,maker:true,faith:F?F.id:null,why:['The Maker spoke to one of the faithful.']});mk.deeds.push({yr:yr(),title:`You spoke with ${cap(cname(c))}`,choice:'speak',out:done.join(' ')||'They listened.'})}
+    if(said){c.deeds.push({yr:yr(),txt:`spoke with the Maker`});log('decree',done.length?2:1,`${cap(cname(c))} Hears the Maker`,`${cap(cname(c))} of the ${f.name} says the Maker spoke to them: "${String(said).slice(0,180)}"${done.length?' '+done.join(' '):''}`,at0.x,at0.y,[f],{char:c.id,maker:true,faith:F?F.id:null,why:[`Because you spoke to ${cname(c)}.`]});
+      const fx0=(acts||[]).filter(x=>x&&['war','peace','mission','persecute','gov'].includes(x.type));if(done.length&&fx0.length){const t0=fx0[0].target?alive().find(o=>o.name.toLowerCase()===String(fx0[0].target).toLowerCase().replace(/^the /,'')):null;mk.follow.push({at:yr()+3+Math.floor(R()*8),from:yr(),cause:`spoke to ${cname(c)} of the ${f.name}`,label:'',fx:fx0.map(x=>x.type),fid:f.id,tid:t0?t0.id:null,prem:null,base:{pop:f.pop,share:myShare(f),setts:facSetts(f).length,unrest:avgUnrest(f)}})}mk.deeds.push({yr:yr(),title:`You spoke with ${cap(cname(c))}`,choice:'speak',out:done.join(' ')||'They listened.'})}
     return done};
 
   // ================= THE GAME: you, your faithful, and the rival immortals =================
@@ -1574,7 +1577,7 @@ function makeSim(seed,opts={}){
     // death
     if(near&&R()<0.55){plague(near,`A grey sickness comes out of the land of ${FN(f)}.`);log('rival',2,`The Breath of ${cap(g.name)}`,`${cap(FN(f))} say their god breathed on ${FN(near)}.`,at(near).x,at(near).y,[near,f],{god:g.key,mine:true});return}
     for(const a of S.agents)if(!a.dead&&a.fac===f.id)a.life+=4;log('rival',1,`${cap(g.name)} Keeps the Dead`,`Among ${FN(f)}, the old live longer than they should.`,at(f).x,at(f).y,[f],{god:g.key})}
-  S.migrateGame=()=>{if(mk.greatness==null)mk.greatness=30;if(mk.mercy==null)mk.mercy=30;if(mk.allTime==null)mk.allTime=0;if(mk.peak==null)mk.peak=0;S.gods=S.gods||[];S.moves=S.moves||[];
+  S.migrateGame=()=>{if(!mk.cardMem)mk.cardMem={};if(!mk.follow)mk.follow=[];if(mk.greatness==null)mk.greatness=30;if(mk.mercy==null)mk.mercy=30;if(mk.allTime==null)mk.allTime=0;if(mk.peak==null)mk.peak=0;S.gods=S.gods||[];S.moves=S.moves||[];
     if(!S.faiths.some(F=>F.god==='you')){let any=false;for(const F of S.faiths)if(F.maker){F.god='you';any=true}if(!any){const f=S.heroFac();if(f){if(f.state!=null){S.faiths[f.state].god='you';S.faiths[f.state].maker=true}else S.foundMyFaith(f)}}}if(!S.godPlan)S.setupGods(2)};
   S.godInfo=()=>S.gods.map(g=>{const f=S.facs[g.fac];return{key:g.key,name:g.name,style:g.style,alive:g.alive,believers:g.believers||0,peoples:(g.peoples||[]).map(i=>S.facs[i].name),hue:f?Math.round(f.hue):0,at:g.at}});
   // ---- what the card-writer knows ----
@@ -1587,14 +1590,14 @@ function makeSim(seed,opts={}){
       rivals:S.godInfo().filter(g=>g.alive).map(g=>`${g.name} (${g.style}), god of the ${g.peoples.join(', ')}, ${g.believers} believers`),
       neighbours:alive().filter(o=>!isMine(o)&&mine.some(m=>borderDist(m,o)<700)).map(o=>`the ${o.name}: ${o.pop} souls, ${o.state!=null?S.faiths[o.state].title:'no faith'}${mine.some(m=>rel(m.id,o.id).war)?', AT WAR with your people':''}`),
       cults:S.moves.filter(m=>m.on&&m.kind==='cult'&&isMine(S.facs[m.fac])).map(m=>`${cname(S.chars[m.leader])} leads ${S.faiths[m.faith].title} among the ${S.facs[m.fac].name} (${Math.round(((S.facs[m.fac].belief||{})[m.faith]||0)*100)}%)`),
-      recent:S.events.filter(e=>Y-e.yr<=60&&e.imp>=2&&e.facs.some(id=>isMine(S.facs[id]))).slice(-12).map(e=>`${e.yr}: ${e.title}. ${e.text.slice(0,140)}`),
-      trigger:trigger||null}};
+      recent:S.events.filter(e=>Y-e.yr<=25&&e.imp>=2&&!e.data.maker&&e.facs.some(id=>isMine(S.facs[id]))).slice(-8).map(e=>`${e.yr}: ${e.title}. ${e.text.slice(0,140)}`),
+      live:S.liveSituations().sort((a,b)=>b.sev-a.sev).slice(0,6).map(s=>s.why),
+      trigger:trigger?{kind:trigger.kind,tag:trigger.tag,why:trigger.why,people:trigger.people,enemy:trigger.enemy||null,year:trigger.yr,expires:trigger.deadline}:null}};
   // ---- the effect vocabulary every card choice is built from ----
   const findP=n=>{if(n==null)return null;const s=String(n).toLowerCase().replace(/^the /,'');return alive().find(o=>o.name.toLowerCase()===s)||null};
   const reachable=f=>f&&f.died==null&&(isMine(f)||myShare(f)>=0.15);S.reach=()=>alive().filter(reachable);
   const myP=n=>{const p=findP(n);return p&&reachable(p)?p:S.reach().sort((a,b)=>b.pop*myShare(b)-a.pop*myShare(a))[0]||null};
   const amt=(v,lo,hi)=>clamp(isFinite(+v)?+v:0,lo,hi);
-  S.applyFx=(list)=>{const done=[];for(const x of (list||[]).slice(0,4)){if(!x||!x.fx)continue;try{const r=FX[x.fx]?FX[x.fx](x):null;if(r)done.push(r)}catch(e){console.warn('fx',x,e)}}return done};
   const FX={
     food(x){const f=myP(x.people);if(!f)return;const a=amt(x.amount,-1,1);for(const s of facSetts(f))s.store=Math.max(0,s.store+(a>0?s.members.length*10*a:s.store*a));return a>0?`Food fills the granaries of ${FN(f)}.`:`The granaries of ${FN(f)} empty.`},
     unrest(x){const f=myP(x.people);if(!f)return;const a=amt(x.amount,-1,1);for(const s of facSetts(f)){s.unrest=clamp(s.unrest+a*0.5);if(a<0)s.resent=Math.max(0,(s.resent||0)+a)}return a<0?`Calm returns to ${FN(f)}.`:`Anger spreads through ${FN(f)}.`},
@@ -1602,7 +1605,7 @@ function makeSim(seed,opts={}){
     ruler(x){const f=myP(x.people);const ru=f&&rulerOf(f);if(!ru||!x.traits)return;for(const k of CTRAITS)if(isFinite(+x.traits[k]))ru.traits[k]=clamp(ru.traits[k]+amt(x.traits[k],-0.5,0.5));return`${cap(cname(ru))} is changed.`},
     kill_ruler(x){const f=myP(x.people);const ru=f&&rulerOf(f);if(!ru)return;const a=charAgent(ru);deed(ru,'was struck down by the Maker');if(a)die(a,'lightning');charDeath(ru,'struck down by the Maker');return`${cap(cname(ru))} is dead.`},
     depose(x){const f=myP(x.people);const ru=f&&rulerOf(f);if(!ru)return;return revokeRuler(f,ru)},
-    war(x){const f=myP(x.people),t=findP(x.target);if(!f||!t||t===f||rel(f.id,t.id).war)return;declareWar(f,t,'holy',['The Maker willed it.']);musterArmy(f);return`${cap(FN(f))} march on ${FN(t)}.`},
+    war(x){const f=myP(x.people),t=findP(x.target);if(!f||!t||t===f||rel(f.id,t.id).war)return;declareWar(f,t,'holy',['The Maker willed it.']);if(!rel(f.id,t.id).war)return;musterArmy(f);return`${cap(FN(f))} march on ${FN(t)}.`},
     peace(x){const f=myP(x.people),t=findP(x.target);if(!f||!t||!rel(f.id,t.id).war)return;makePeace(f,t,['The Maker commanded peace.']);return`Peace between ${FN(f)} and ${FN(t)}.`},
     bless_army(x){const f=myP(x.people);if(!f)return;let n=0;for(const a of S.agents)if(!a.dead&&a.fac===f.id&&(a.role==='soldier'||a.hero)){a.maxhp*=1.35;a.hp=a.maxhp;a.dmg*=1.25;n++}musterArmy(f);return`The soldiers of ${FN(f)} fight like the possessed.`},
     champion(x){const f=myP(x.people);if(!f)return;const m=S.agents.filter(a=>!a.dead&&a.fac===f.id&&!a.titan&&a.char==null).sort((a,b)=>b.dmg*b.maxhp-a.dmg*a.maxhp)[0];if(!m)return;heroize(m);m.maxhp*=1.7;m.hp=m.maxhp;m.dmg*=1.5;return`A champion rises among ${FN(f)}.`},
@@ -1637,26 +1640,139 @@ function makeSim(seed,opts={}){
   S.FX_KEYS=Object.keys(FX);
   function musterArmy(f){const wars=alive().filter(o=>o!==f&&rel(f.id,o.id).war);if(!wars.length)return;const memb=S.agents.filter(a=>!a.dead&&a.fac===f.id&&!a.titan);const want=Math.floor(memb.length*0.4);let cur=memb.filter(a=>a.role==='soldier').length;for(const a of memb){if(cur>=want)break;if(!a.role&&a.age>6){a.role='soldier';cur++}}
     if(!f.army){let best=null,bd=1e9;const c0=capitalOf(f)||f.origin;for(const s of S.setts){if(!wars.some(w=>w.id===s.fac))continue;const d=Math.hypot(s.x-c0.x,s.y-c0.y);if(d<bd){bd=d;best=s}}if(best){f.warTarget=best.id;formArmy(f,best)}}}
-  // ---- what is worth a card right now ----
-  S.cardTrigger=(emergencyOnly)=>{const Y=yr();const mine=S.reach();if(!mine.length)return null;mk.seen=mk.seen||{};
-    const ev=S.events.slice(-80).filter(e=>Y-e.yr<=(emergencyOnly?3:30)&&!mk.seen[e.id]&&(e.facs.some(id=>reachable(S.facs[id]))||['ai','undying','winter','climate','fallout','omen'].includes(e.type))&&!e.data.maker);
-    const urgent=e=>(e.type==='conquest'&&e.text.includes('the capital'))||e.type==='revolution'||e.type==='rivalgod'||e.type==='ai'||e.type==='undying'||e.type==='winter'||e.type==='fallout'||e.type==='zealots'||e.type==='apostasy'||(e.type==='convert'&&!(e.data.faith!=null&&S.faiths[e.data.faith]&&S.faiths[e.data.faith].god==='you'))||(e.type==='cult'&&e.data.move!=null&&((S.facs[e.facs[0]].belief||{})[S.moves[e.data.move].faith]||0)>0.12)||(e.type==='war'&&isMine(S.facs[e.facs[1]])&&S.facs[e.facs[0]].pop>S.facs[e.facs[1]].pop*1.3);
-    const notable=e=>urgent(e)||e.type==='razed'||e.type==='war'||e.type==='plague'||e.type==='schism'||e.type==='cult'||(e.type==='rival'&&e.data.mine)||e.type==='famine'||e.type==='coup'||e.type==='prophet'||e.type==='persecution';
-    let pick0=ev.filter(urgent).sort((a,b)=>b.imp-a.imp)[0];
-    if(!pick0&&emergencyOnly&&mk.danger&&(mk.dangerYears===3||mk.dangerYears%40===0))return{kind:'emergency',why:S.dangerText(),people:mine[0].name,danger:mk.danger};
-    if(!pick0&&emergencyOnly){for(const f of mine){if(myShare(f)<0.45)return{kind:'emergency',why:`Faith in you is collapsing among the ${f.name}: only ${Math.round(myShare(f)*100)} in a hundred still pray to you.`,people:f.name}}return null}
-    if(!pick0&&!emergencyOnly)pick0=ev.filter(notable).sort((a,b)=>b.imp-a.imp)[0]||ev.filter(e=>e.imp>=2).sort((a,b)=>b.imp-a.imp)[0];
-    if(pick0){mk.seen[pick0.id]=1;return{kind:urgent(pick0)?'emergency':'moment',why:`${pick0.yr}: ${pick0.title}. ${pick0.text}`,people:(S.facs[pick0.facs.find(id=>reachable(S.facs[id]))]||mine[0]).name,ev:pick0.id}}
-    const f=mine.sort((a,b)=>b.pop-a.pop)[0];const ru=rulerOf(f);const ideas=[ru?`${cname(ru)}, ${rulerTitle(f)} of the ${f.name}, wants something from you.`:null,`The priests of the ${f.name} ask what their god wants of them next.`,`A child of the ${f.name} is born with strange marks, and the priests argue over what it means.`,alive().some(o=>!isMine(o)&&borderDist(f,o)<600)?`The ${f.name} look across the border at strangers who pray to other gods.`:null].filter(Boolean);
-    return{kind:'moment',why:pick(ideas),people:f.name}};
+  // ---- LIVE crises: what is at stake right now (never what merely happened once) ----
+  // Each situation is {key, grp, tag, sev, why, people, enemy, prem}. `prem` is a small plain-data premise that
+  // S.premise() can re-check at any later moment (when the card is shown, when the option is applied, at follow-up).
+  mk.cardMem=mk.cardMem||{};mk.follow=mk.follow||[];
+  const CARD_DEADLINE=6;      // years a card may wait before its premise is considered stale
+  const CARD_RECHECK=6;       // an escalated situation may re-fire after this many years; the same one waits CARD_REPEAT
+  const CARD_REPEAT=50;
+  const pctOf=v=>Math.round(v*100);
+  const facByName=n=>{if(n==null)return null;const s=String(n).toLowerCase().replace(/^the /,'');return S.facs.find(o=>o.name.toLowerCase()===s&&o.died==null)||S.facs.find(o=>o.name.toLowerCase()===s)||null};
+  S.liveSituations=()=>{const Y=yr();const out=[];const mine=S.reach();if(!mine.length)return out;
+    const push=s=>{s.grp=s.grp||s.key;out.push(s)};
+    // armies on the move against a town of a people you can reach
+    for(const A of alive()){const ar=A.army;if(!ar||ar.state==='muster')continue;const t=settById(ar.target);if(!t||t.fac===A.id)continue;const D=S.facs[t.fac];if(!D||D.died!=null||!reachable(D)||!rel(A.id,D.id).war)continue;
+      const cap0=capitalOf(D)===t;const sieging=ar.state==='siege';const sev=(sieging?3:2)+(cap0?1:0);
+      push({key:`siege:${A.id}:${t.id}`,grp:`war:${Math.min(A.id,D.id)}-${Math.max(A.id,D.id)}`,tag:'war',sev,people:D.name,enemy:A.name,
+        why:`War, right now: the ${A.name} ${sieging?'are besieging':'are marching on'} ${t.name}, ${cap0?'the capital':'a town'} of the ${D.name}${A.pop>D.pop*1.3?`, and the ${A.name} are the larger people`:''}.`,
+        prem:{k:'siege',a:A.id,t:t.id,d:D.id}})}
+    // open wars without an army yet, where a people you can reach is outnumbered
+    for(const f of mine)for(const o of alive()){if(o===f||isMine(o)||!rel(f.id,o.id).war)continue;const r=rel(f.id,o.id);
+      if(o.pop>f.pop*1.3&&Y-(r.since||0)<=60)push({key:`war:${f.id}:${o.id}:${Math.floor(r.since||0)}`,grp:`war:${Math.min(f.id,o.id)}-${Math.max(f.id,o.id)}`,tag:'war',sev:2,people:f.name,enemy:o.name,
+        why:`War, right now: the ${f.name} fight the ${o.name} ${r.goalText||''}, and the ${o.name} are stronger (${o.pop} against ${f.pop}).`,prem:{k:'war',a:f.id,b:o.id}})}
+    // plague still abroad
+    for(const e of S.events.slice(-60))if(e.type==='plague'&&Y-e.yr<=6&&!e.data.maker){const f=S.facs[e.facs[0]];if(f&&reachable(f))push({key:`plague:${e.id}`,tag:'plague',sev:3,people:f.name,why:`A plague is abroad among the ${f.name} (since year ${e.yr}); the sick are still dying.`,prem:{k:'plague',f:f.id,yr:e.yr}})}
+    for(const f of mine){const ss=facSetts(f);const store=ss.reduce((t,s)=>t+s.store,0);const au=avgUnrest(f);
+      if(ss.length&&store<f.pop*1.2&&(S.world.foodMult<0.9||au>0.35))push({key:`famine:${f.id}`,tag:'famine',sev:3,people:f.name,why:`Famine, right now: the granaries of the ${f.name} are nearly empty and the people are hungry.`,prem:{k:'famine',f:f.id}});
+      if(au>0.7)push({key:`unrest:${f.id}`,tag:'unrest',sev:2,people:f.name,why:`The towns of the ${f.name} are on the edge of revolt (unrest ${pctOf(au)} in a hundred).`,prem:{k:'unrest',f:f.id}});
+      if(isMine(f)&&myShare(f)<0.45)push({key:`faith:${f.id}`,tag:'faith',sev:3,people:f.name,why:`Faith in you is collapsing among the ${f.name}: only ${pctOf(myShare(f))} in a hundred still pray to you.`,prem:{k:'faith',f:f.id}});
+      const ru=rulerOf(f);if(ru&&ru.alive){const age=Y-(ru.born||Y);if((au>0.55&&ru.traits.cruelty>0.5)||(age>68&&f.heir==null))push({key:`ruler:${ru.id}`,tag:'ruler',sev:2,people:f.name,why:`${cap(cname(ru))}, ${rulerTitle(f)} of the ${f.name}, is in danger: ${age>68&&f.heir==null?'old, and with no heir':'the towns murmur against a cruel hand'}.`,prem:{k:'ruler',c:ru.id}})}}
+    // cults and prophets rising among a people you can reach
+    for(const m of S.moves){if(!m.on||!(m.kind==='cult'||m.kind==='prophet'))continue;const f=S.facs[m.fac];if(!f||!reachable(f)||!S.chars[m.leader]||!S.faiths[m.faith])continue;const sh=(f.belief||{})[m.faith]||0;if(sh<0.07)continue;
+      push({key:`move:${m.id}`,tag:'cult',sev:sh>0.2?3:2,people:f.name,why:`${m.kind==='cult'?'A cult is rising':'A prophet is preaching'} among the ${f.name}: ${cap(cname(S.chars[m.leader]))} leads ${S.faiths[m.faith].title}, and ${pctOf(sh)} in a hundred already follow.`,prem:{k:'move',m:m.id}})}
+    // a rival god moving against you
+    for(const e of S.events.slice(-40))if(Y-e.yr<=4&&(e.type==='rivalgod'||(e.type==='rival'&&e.data.mine))&&e.data.god){const g=S.gods.find(x=>x.key===e.data.god);const f=S.facs[e.facs.find(id=>reachable(S.facs[id]))]||mine[0];
+      if(g&&g.alive)push({key:`god:${e.id}`,grp:`god:${g.key}`,tag:'rival',sev:e.type==='rivalgod'?3:2,people:f.name,why:`A rival god moves, right now: ${cap(g.name)} (${g.style}) works against your people. ${e.title}.`,prem:{k:'god',g:g.key}})}
+    // dangers to the Maker
+    const di=S.doomInfo();const aiF=facByName(di.aiWho);if(di.ai>=45)push({key:'ai',tag:'danger',sev:4,people:(aiF&&reachable(aiF)?aiF.name:mine[0].name),why:`The machines of the ${di.aiWho||'world'} are ${di.ai}% of the way to a mind greater than yours.`,prem:{k:'ai'}});
+    if(mk.danger&&(mk.dangerYears||0)>=3)push({key:`danger:${mk.danger}`,tag:'danger',sev:3,people:mine[0].name,why:S.dangerText(),danger:mk.danger,prem:{k:'danger',d:mk.danger}});
+    // sudden shocks of the last few years that still ask for an answer
+    for(const e of S.events.slice(-40))if(Y-e.yr<=3&&!e.data.maker&&['revolution','zealots','apostasy','winter','fallout','undying','ai'].includes(e.type)&&(e.facs.some(id=>reachable(S.facs[id]))||['winter','fallout','undying','ai'].includes(e.type))){
+      const f=S.facs[e.facs.find(id=>reachable(S.facs[id]))]||mine[0];push({key:`ev:${e.id}`,tag:'shock',sev:3,people:f.name,why:`Just now (year ${e.yr}): ${e.title}. ${e.text.slice(0,220)}`,prem:{k:'event',yr:e.yr,f:f.id}})}
+    return out};
+  const sitEligible=s=>{const m=mk.cardMem[s.grp];if(!m)return true;const Y=yr();return Y-m.yr>=CARD_REPEAT||(s.sev>m.sev&&Y-m.yr>=CARD_RECHECK)};
+  const toTrigger=s=>({kind:'emergency',tag:s.tag,key:s.key,grp:s.grp,sev:s.sev,why:s.why,people:s.people,enemy:s.enemy||null,danger:s.danger||null,prem:s.prem,yr:yr(),deadline:yr()+CARD_DEADLINE});
+  // cardTrigger(true): the best LIVE crisis not on cooldown (pure; mark it with S.markCard when a card is really written).
+  // cardTrigger(false): a quiet-time dilemma for a peaceful stretch.
+  S.cardTrigger=(live)=>{const Y=yr();const mine=S.reach();if(!mine.length)return null;
+    if(live){const c=S.liveSituations().filter(sitEligible).sort((a,b)=>b.sev-a.sev)[0];return c?toTrigger(c):null}
+    const f=mine.slice().sort((a,b)=>b.pop*myShare(b)-a.pop*myShare(a))[0];const ru=rulerOf(f);const ideas=[ru&&ru.alive?`${cname(ru)}, ${rulerTitle(f)} of the ${f.name}, wants something from you.`:null,`The priests of the ${f.name} ask what their god wants of them next.`,`A child of the ${f.name} is born with strange marks, and the priests argue over what it means.`,alive().some(o=>!isMine(o)&&borderDist(f,o)<600)?`The ${f.name} look across the border at strangers who pray to other gods.`:null].filter(Boolean);
+    return{kind:'moment',tag:'moment',key:'moment:'+Y,grp:'moment',sev:0,why:pick(ideas),people:f.name,enemy:null,prem:{k:'moment',f:f.id},yr:Y,deadline:Y+CARD_DEADLINE}};
+  S.markCard=t=>{if(t&&t.grp)mk.cardMem[t.grp]={yr:yr(),sev:t.sev||0}};
+  S.unmarkCard=t=>{if(t&&t.grp)delete mk.cardMem[t.grp]};
+  S.freshTrigger=t=>({...t,yr:yr(),deadline:yr()+CARD_DEADLINE});
+  // ---- is the premise still true? (plain data in, {ok, gone, text} out) ----
+  S.premise=(p)=>{const Y=yr();if(!p)return{ok:true,text:'',gone:[]};const alv=id=>{const f=S.facs[id];return f&&f.died==null};const bad=(text,gone)=>({ok:false,text,gone:gone||[]});const good=text=>({ok:true,text:text||'',gone:[]});const nf=id=>bad(`The ${S.facs[id].name} are no more.`,[S.facs[id].name]);
+    switch(p.k){
+      case'siege':{const A=S.facs[p.a],D=S.facs[p.d],t=S.setts.find(s=>s.id===p.t);if(!alv(p.d))return nf(p.d);if(!alv(p.a))return bad(`The ${A.name} who threatened the ${D.name} are gone.`);if(!t||t.fac!==p.d)return bad(`${t?t.name:'The town'} has fallen.`);
+        if(!rel(p.a,p.d).war)return bad(`The war between the ${A.name} and the ${D.name} is over.`);const ar=A.army;if(!ar||ar.target!==p.t)return bad(`The ${A.name} no longer threaten ${t.name}.`);return good(`${t.name} is ${ar.state==='siege'?'besieged':'threatened'}.`)}
+      case'war':{if(!alv(p.a))return nf(p.a);if(!alv(p.b))return nf(p.b);return rel(p.a,p.b).war?good('The war goes on.'):bad('The war is over.')}
+      case'plague':{if(!alv(p.f))return nf(p.f);return Y-p.yr<=9?good('The sickness is abroad.'):bad('The sickness has passed.')}
+      case'famine':{if(!alv(p.f))return nf(p.f);const f=S.facs[p.f];const store=facSetts(f).reduce((t,s)=>t+s.store,0);return store<f.pop*2.2&&(S.world.foodMult<1||avgUnrest(f)>0.25)?good('They are hungry.'):bad('The granaries have filled again.')}
+      case'unrest':{if(!alv(p.f))return nf(p.f);return avgUnrest(S.facs[p.f])>0.5?good('The towns seethe.'):bad('The unrest has cooled.')}
+      case'faith':{if(!alv(p.f))return nf(p.f);return myShare(S.facs[p.f])<0.55?good('Faith is weak.'):bad('The faithful have returned.')}
+      case'ruler':{const c=S.chars[p.c];if(!c||!c.alive)return bad(`${c?cap(cname(c)):'The ruler'} is dead.`);const f=S.facs[c.fac];if(f.died!=null)return nf(c.fac);return f.ruler===c.id?good('The ruler lives.'):bad(`${cap(cname(c))} no longer rules.`)}
+      case'move':{const m=S.moves[p.m];if(!m||!m.on)return bad('The movement is over.');if(!alv(m.fac))return nf(m.fac);return good('It still grows.')}
+      case'god':{const g=S.gods.find(x=>x.key===p.g);return g&&g.alive?good('The rival god still stands.'):bad('The rival god is forgotten.')}
+      case'ai':return S.doomInfo().ai>=35?good('The machines wake.'):bad('The machines have been checked.');
+      case'danger':return mk.danger===p.d?good(''):bad('The danger has passed.');
+      case'event':{if(p.f!=null&&!alv(p.f))return nf(p.f);return Y-p.yr<=8?good(''):bad('The moment has passed.')}
+      case'moment':{if(p.f!=null&&!alv(p.f))return nf(p.f);return good('')}
+    }return good('')};
+  // the peoples a card names (from its trigger and its effects); `gone` lists those that no longer exist or no longer hear you
+  const effNames=effs=>{const out=[];for(const x of effs||[]){if(!x)continue;if(x.people)out.push(String(x.people));if(x.target)out.push(String(x.target))}return out};
+  const nameGone=n=>{const f=facByName(n);if(!f)return`The ${String(n).replace(/^the /i,'')} are unknown to the world.`;if(f.died!=null)return`The ${f.name} are no more; your word comes too late.`;return null};
+  // check a card before showing it (no option) or before applying one (opt). Returns {ok, stale:'premise'|'target'|'deadline'|null, msg, gone}
+  S.checkCard=(trig,card,opt)=>{const Y=yr();const out={ok:true,stale:null,msg:'',gone:[]};
+    if(trig){if(trig.prem){const p=S.premise(trig.prem);if(!p.ok){out.ok=false;out.stale='premise';out.msg=p.text;out.gone=p.gone||[];return out}}
+      if(trig.deadline!=null&&Y>trig.deadline){out.ok=false;out.stale='deadline';out.msg='The moment has passed.';return out}
+      const g0=trig.people?nameGone(trig.people):null;if(g0){out.ok=false;out.stale='premise';out.msg=g0;out.gone=[trig.people];return out}}
+    const effs=opt?opt.effects:(card?card.opts.flatMap(o=>o.effects||[]):[]);
+    for(const n of new Set(effNames(effs))){const m=nameGone(n);if(m){out.ok=false;out.stale='target';out.gone.push(n);out.msg=out.msg||m}}
+    return out};
+  // ---- applying the Maker's word, with consequences you can see ----
+  const FXFAIL={war:'they are already at war, or cannot march',peace:'there is no war to end',cult:'there is no cult left to deal with',persecute:'no foreign temple stands there',gov:'they already live under that rule',ally:'they cannot ally while at war, or are already allied',tech:'there is nothing more they can learn yet',mission:'the road to them is closed',champion:'no one is left to raise up',kill_ruler:'they have no ruler',depose:'they have no ruler',ruler:'they have no ruler',prophet:'no voice could be raised',secede:'no town was ready to break away',forbid:'there was nothing to forbid',enslave:'the raiders found no one',raid:'the raiders found nothing worth taking',migrate:'there was no room to settle',grow:'there was no one to bear children'};
+  const LABEL={food:'Food',unrest:'Unrest',values:'A change of ways',ruler:'The ruler changed',kill_ruler:'The ruler struck down',depose:'The ruler cast down',war:'War',peace:'Peace',ally:'An alliance',bless_army:'The army blessed',champion:'A champion',tech:'A revelation',faith:'Faith',mission:'Missionaries',cult:'The cult',prophet:'A prophet',heal:'Healing',plague:'Plague',golden:'A golden age',grow:'Births',migrate:'Settlers',persecute:'The other temples',gov:'A new rule',weapon:'New weapons',forbid:'Forbidden knowledge',secede:'A town breaks away',sacrifice:'Sacrifice',enslave:'Chains',raid:'Raiders',doctrine:'A new teaching'};
+  const fxSpot=f=>{const s=f?(capitalOf(f)||f.origin):null;return s?{x:s.x,y:s.y}:{x:W/2,y:H/2}};
+  const logFx=(ctx,x,f,t,text,okay)=>{if(!ctx||!ctx.cause)return;const sp=fxSpot(f||t);const facs=[f,t].filter(Boolean);
+    log('makerfx',okay?2:1,okay?`${LABEL[x.fx]||'Your word'}: the ${f?f.name:'world'}`:'Your Word Falls Short',text,sp.x,sp.y,facs,{maker:true,fx:x.fx,ok:!!okay,why:[`Because you ${ctx.cause}.`].concat(ctx.premise?[`The trouble was: ${ctx.premise}`]:[])})};
+  S.applyFx=(list,ctx)=>{const done=[];const oks=[];ctx=ctx||{};
+    for(const x of (list||[]).slice(0,4)){if(!x||!x.fx||!FX[x.fx])continue;
+      if(x.fx==='greatness'||x.fx==='mercy'||x.fx==='doctrine'){try{const r=FX[x.fx](x);if(r){done.push(r);logFx(ctx,x,null,null,r,true)}}catch(e){console.warn('fx',x,e)}continue}
+      // the people and target must still exist: never let a dead people silently turn into some other people
+      const pf=x.people!=null?facByName(x.people):null,tf=x.target!=null?facByName(x.target):null;
+      const gone=(x.people!=null&&(!pf||pf.died!=null||!reachable(pf)))?x.people:(x.target!=null&&(!tf||tf.died!=null))?x.target:null;
+      if(gone!=null){const gf=facByName(gone);const msg=gf&&gf.died==null?`The ${gf.name} no longer hear you; your word does not reach them.`:nameGone(gone)||`The ${gone} cannot be found.`;done.push(msg);logFx(ctx,x,gf&&gf.died!=null?gf:null,null,msg,false);ctx.failed=(ctx.failed||0)+1;continue}
+      let r=null;try{r=FX[x.fx](x)}catch(e){console.warn('fx',x,e)}
+      const f=pf||myP(x.people);
+      if(r){done.push(r);oks.push({x,f,t:tf});logFx(ctx,x,f,tf,r,true)}
+      else{const msg=`Your word changes nothing for the ${f?f.name:'world'}: ${FXFAIL[x.fx]||'there is nothing left to change'}.`;done.push(msg);logFx(ctx,x,f,tf,msg,false);ctx.failed=(ctx.failed||0)+1}}
+    ctx.okCount=(ctx.okCount||0)+oks.length;
+    if(oks.length&&ctx.cause&&ctx.follow!==false&&oks[0].f){const f0=oks[0].f,t0=oks[0].t;mk.follow.push({at:yr()+3+Math.floor(R()*8),from:yr(),cause:ctx.cause,label:ctx.label||'',fx:oks.map(o=>o.x.fx),fid:f0.id,tid:t0?t0.id:null,prem:ctx.prem||null,base:{pop:f0.pop,share:myShare(f0),setts:facSetts(f0).length,unrest:avgUnrest(f0)}})}
+    return done};
+  // ---- follow-ups: a few years later, say what the Maker's word did ----
+  const FOLLOW_LIMIT=24;
+  function followOutcome(F){const f=S.facs[F.fid],t=F.tid!=null?S.facs[F.tid]:null;const b=F.base||{};const P=F.prem;let good=null,text='';
+    if(!f||f.died!=null)return{good:false,text:`The ${f?f.name:'people'} you spoke for are gone. Your word did not save them.`,facs:f?[f]:[]};
+    const dpop=f.pop-(b.pop||f.pop),dsh=myShare(f)-(b.share||0);const pp=P?S.premise(P):null;
+    const popTxt=`The ${f.name} number ${f.pop}${b.pop?` (${dpop>=0?'up':'down'} from ${b.pop})`:''}`;
+    if(P&&P.k==='siege'){const A=S.facs[P.a],st=S.setts.find(s=>s.id===P.t);if(st&&st.fac===P.d&&pp&&!pp.ok){good=true;text=`The siege of ${st.name} was broken after you ${F.cause}. ${popTxt}.`}else if(st&&st.fac!==P.d){good=false;text=`${st.name} fell to the ${S.facs[st.fac]?S.facs[st.fac].name:A.name}. What you did after you ${F.cause} did not save it.`}else{good=false;text=`The ${A.name} still press ${st?st.name:'the siege'}. What you did after you ${F.cause} was not enough.`}}
+    else if(P&&P.k==='war'){good=!!pp&&!pp.ok;text=good?`The war between the ${S.facs[P.a].name} and the ${S.facs[P.b].name} ended after you ${F.cause}. ${popTxt}.`:`The war still burns after you ${F.cause}. ${popTxt}.`}
+    else if(P&&P.k==='plague'){good=!!pp&&!pp.ok&&dpop>-Math.max(3,(b.pop||0)*0.2);text=pp&&!pp.ok?`The sickness passed from the ${f.name} after you ${F.cause}. ${popTxt}.`:`The sickness still lingers among the ${f.name} after you ${F.cause}. ${popTxt}.`}
+    else if(P&&P.k==='famine'){good=!!pp&&!pp.ok;text=good?`The granaries of the ${f.name} are full again after you ${F.cause}. ${popTxt}.`:`Hunger still grips the ${f.name} after you ${F.cause}. ${popTxt}.`}
+    else if(P&&P.k==='unrest'){good=!!pp&&!pp.ok;text=good?`The towns of the ${f.name} calmed after you ${F.cause}.`:`The towns of the ${f.name} still seethe after you ${F.cause}.`}
+    else if(P&&P.k==='faith'){good=dsh>0.02;text=`Among the ${f.name}, ${pctOf(myShare(f))} in a hundred now pray to you (it was ${pctOf(b.share||0)}) after you ${F.cause}.`}
+    else if(P&&P.k==='ruler'){const c=S.chars[P.c];good=!!pp&&pp.ok;text=good?`${cap(cname(c))} still rules the ${f.name} after you ${F.cause}.`:`${c?cap(cname(c)):'The ruler'} no longer rules the ${f.name}. Your word came too late, or it did not hold.`}
+    else if(P&&P.k==='move'){const m=S.moves[P.m];good=!!pp&&!pp.ok;text=good?`The movement among the ${f.name} faded after you ${F.cause}.`:`The movement among the ${f.name} still grows; ${m&&S.chars[m.leader]?cap(cname(S.chars[m.leader])):'its leader'} was not stopped by what you did.`}
+    else if(P&&P.k==='god'){good=!!pp&&!pp.ok;text=good?`The rival god you feared is forgotten, after you ${F.cause}.`:`The rival god still stands against you after you ${F.cause}. ${popTxt}.`}
+    else if(P&&(P.k==='ai'||P.k==='danger')){good=!!pp&&!pp.ok;text=good?`The danger eased after you ${F.cause}.`:`The danger has not passed, though you ${F.cause}.`}
+    else if(F.fx.includes('war')&&t){const w=!!rel(f.id,t.id).war;good=w;text=w?`The war with the ${t.name} that you willed still goes on. ${popTxt}.`:`The war with the ${t.name} that you willed is over. ${popTxt}.`}
+    else if(F.fx.includes('peace')&&t){const w=!!rel(f.id,t.id).war;good=!w;text=w?`The peace you commanded between the ${f.name} and the ${t.name} broke.`:`The peace you commanded between the ${f.name} and the ${t.name} holds.`}
+    else{good=dpop>=0&&dsh>=-0.02;text=`${popTxt}, and ${pctOf(myShare(f))} in a hundred pray to you (it was ${pctOf(b.share||0)}), since you ${F.cause}.`}
+    return{good,text,facs:[f].concat(t&&t.id!==f.id?[t]:[])}}
+  S.followYear=()=>{if(!mk.follow||!mk.follow.length)return;const Y=yr();const due=mk.follow.filter(F=>F.at<=Y);if(!due.length)return;mk.follow=mk.follow.filter(F=>F.at>Y);
+    for(const F of due.slice(0,FOLLOW_LIMIT)){const o=followOutcome(F);const sp=fxSpot(o.facs[0]);
+      log('followup',2,o.good?'Your Word Bore Fruit':'Your Word Was Not Enough',o.text,sp.x,sp.y,o.facs,{maker:true,ok:!!o.good,why:[`Because you ${F.cause}.`]})}
+    if(mk.follow.length>FOLLOW_LIMIT*2)mk.follow=mk.follow.slice(-FOLLOW_LIMIT)};
   // ---- the lead prophet who may call on you ----
   S.leadProphet=()=>{const mine=S.myPeoples();let best=null,bs=-1;for(const c of S.chars){if(!c.alive)continue;const f=S.facs[c.fac];if(!isMine(f))continue;const prophetish=c.makerProphet||c.role==='prophet'||(c.role==='ruler'&&(['theocracy','cult'].includes(f.gov)||c.traits.piety>0.65));if(!prophetish)continue;const sc=c.traits.piety+(c.role==='ruler'?0.4:0)+f.pop/200+(c.makerProphet?0.3:0);if(sc>bs){bs=sc;best=c}}
     if(!best){const f=mine.sort((a,b)=>b.pop-a.pop)[0];if(f){const p=makeProphetIn(f,capitalOf(f),null,'The faithful needed a voice.');if(p)best=p}}return best};
   // the prophet obeys you: decrees from a conversation, applied with real force
-  S.prophetDecrees=(cid,acts)=>{const c=S.chars[cid];if(!c||!c.alive)return[];const f=S.facs[c.fac];const isRuler=f.ruler===c.id;const ru=rulerOf(f);const obey=clamp(0.2+c.traits.piety*0.35+(mk.mercy>=30&&mk.mercy<=75?0.15:0)+mk.greatness/500-(mk.mercy<=20?0.15:0)-(mk.greatness<=20?0.15:0));const done=[];
+  S.prophetDecrees=(cid,acts,prem)=>{const c=S.chars[cid];if(!c||!c.alive)return[];const f=S.facs[c.fac];const isRuler=f.ruler===c.id;const ru=rulerOf(f);const obey=clamp(0.2+c.traits.piety*0.35+(mk.mercy>=30&&mk.mercy<=75?0.15:0)+mk.greatness/500-(mk.mercy<=20?0.15:0)-(mk.greatness<=20?0.15:0));const done=[];
     for(const x of (acts||[]).slice(0,4)){if(!x||!x.fx)continue;if(R()>(isRuler?Math.min(1,obey+0.2):obey)){done.push(`${cap(FN(f))} ${pick(['grumble, and do not','argue in the temples, and in the end do not','hear the words, and choose not to'])} ${x.fx==='war'?'march':x.fx==='peace'?'make peace':'obey'}.`);continue}
       if(false){done.push(`${cap(cname(ru))} would not ${x.fx==='war'?'go to war':x.fx==='peace'?'make peace':'do it'} on a prophet's word.`);continue}
-      if(['greatness','mercy','plague','kill_ruler'].includes(x.fx))continue;x.people=x.people||f.name;const r=S.applyFx([x]);done.push(...r)}
+      if(['greatness','mercy','plague','kill_ruler'].includes(x.fx))continue;x.people=x.people||f.name;const r=S.applyFx([x],{cause:`spoke to ${cname(c)} of the ${f.name}`,premise:prem&&prem.text||'',prem:prem&&prem.prem||null});done.push(...r)}
     return done};
 
 
