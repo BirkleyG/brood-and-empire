@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Brood &amp; Empire</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Grenze:wght@500;600;700&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Crimson+Pro:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Runic&family=Noto+Sans+Cherokee&family=Noto+Sans+Canadian+Aboriginal&family=Noto+Sans+Ethiopic&family=Noto+Sans+Georgian&family=Noto+Sans+Armenian&family=Noto+Sans+Devanagari&family=Noto+Sans+Hebrew&family=Noto+Sans+Arabic&family=Noto+Sans+JP&family=Noto+Sans+TC&display=swap">
+<script type="module" src="/src/main.ts"></script>
+</head>
+<body>
+
+<div id="app">
+  <header class="bar">
+    <div class="brand"><h1>Brood &amp; Empire</h1><small id="worldName"></small><small id="saveStat" class="savest" aria-live="polite"></small></div>
+    <div class="clock"><span class="lbl">Year</span><b id="year">0</b></div>
+    <div class="ctrls">
+      <button class="btn" id="play" type="button">Pause</button>
+      <div class="seg" id="speed" role="group" aria-label="Simulation speed">
+        <button type="button" data-s="0.25">¼×</button><button type="button" data-s="1" aria-pressed="true">1×</button><button type="button" data-s="4">4×</button><button type="button" data-s="15">15×</button><button type="button" data-s="40">40×</button>
+      </div>
+      <button class="btn skipb" id="skipBtn" type="button">Skip to next age</button>
+      <div class="sagabox"><span class="schip" id="sagaChip">Age I · endless</span><label class="sopt"><input type="checkbox" id="sagaOn" checked> Saga</label><select id="ages" aria-label="Number of ages"><option value="0" selected>Endless</option><option value="5">5 ages</option><option value="8">8 ages</option><option value="12">12 ages</option></select><button type="button" class="btn ghost endb" id="endBtn" title="Bring this history to its final age">End the world</button></div>
+      <button class="btn grow" id="worldsBtn" type="button">Worlds</button><button class="btn grow" id="newWorld" type="button">New world</button>
+      <button class="btn primary grow" id="bookBtn" type="button">Read the book</button>
+    </div>
+  </header>
+  <main>
+    <section class="stage" aria-label="World map">
+      <canvas id="cv"></canvas>
+      <div class="news" id="news" hidden><span class="nlab">Breaking</span><div class="nwin"><div class="ntrack" id="newsTrack"></div></div></div>
+      <div class="alert" id="alert" hidden role="status"></div>
+      <div class="chips-tl" id="worldChips"></div>
+      <div class="zoom"><button type="button" id="zin" aria-label="Zoom in">+</button><button type="button" id="zout" aria-label="Zoom out">−</button><button type="button" id="zfit" aria-label="Fit world" style="font-size:12px">fit</button></div>
+      <div class="hint">Drag to pan · scroll or pinch to zoom in on towns · tap anyone to see why they do what they do</div>
+      <button type="button" class="actbtn" id="actBtn" hidden title="Reach into the world: choose a town, then a soul">✦ Act</button><div class="actbanner" id="actBanner" hidden>Choose a town to touch · time has slowed <button type="button" class="btn ghost" id="actCancel">Cancel</button></div>
+      <label class="slowz"><input type="checkbox" id="slowZoom" checked> Slow time when zoomed in</label>
+    </section>
+    <aside class="side">
+      <section class="hand" id="hand" aria-live="polite"></section>
+      <form class="oracle" id="oracle" hidden>
+        <label for="prompt">Speak to the world <small id="oracleMode">anything at all</small></label>
+        <div class="orow"><textarea id="prompt" placeholder="e.g. the red ones discover music…" maxlength="400"></textarea><button class="btn primary" type="submit" id="speak">Speak</button></div>
+        <div class="sugg" id="sugg"></div>
+        <div class="ostat" id="ostat"></div>
+      </form>
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected="true" data-t="peoples">Peoples</button>
+        <button type="button" role="tab" aria-selected="false" data-t="chron">Chronicle</button>
+        <button type="button" role="tab" aria-selected="false" data-t="inspect">Specimen</button>
+        <button type="button" role="tab" aria-selected="false" data-t="voices" hidden>Voices</button>
+      </nav>
+      <div class="panel" id="p-peoples" role="tabpanel"></div>
+      <div class="panel" id="p-chron" role="tabpanel" hidden></div>
+      <div class="panel" id="p-inspect" role="tabpanel" hidden><div class="empty">Tap any creature or settlement on the map to examine it here.</div></div>
+      <div class="panel" id="p-voices" role="tabpanel" hidden></div>
+    </aside>
+  </main>
+  <div class="chapter" id="chapter" hidden>
+    <div class="chin"><div class="cpage" id="cpage"></div>
+      <div class="cfoot"><span class="cwait" id="cWait">You can keep reading while the chapter is written.</span><span class="xstat" id="cExportStat"></span><button class="btn" type="button" id="cReplay" hidden>Watch the replay</button><button class="btn" type="button" id="cExport" hidden>Export the book</button><button class="btn primary" type="button" id="cNext">Continue to the next age</button></div></div>
+  </div>
+  <div class="book" id="book" hidden>
+    <div class="bookin">
+      <div class="bookhd"><div class="row"><button class="btn primary" type="button" id="exportBtn">Export the book</button><span class="xstat" id="exportStat"></span><button class="btn" type="button" id="narrateBtn" hidden>Narrate</button></div><div class="row"><button class="btn" type="button" id="bookResume">Close and keep simulating</button></div></div>
+      <div class="bpage" id="bpage"></div>
+    </div>
+  </div>
+</div>
+<div id="worlds" class="wmodal" hidden role="dialog" aria-modal="true" aria-labelledby="wTitle"><div class="wbox"><h2 id="wTitle">Your worlds</h2><p id="wsub" class="d"></p><div id="wlist"></div><div class="wrow"><button type="button" id="wPro" class="btn ghost">Replay the prologue</button><button type="button" id="wNew" class="btn">Start a new world</button><button type="button" id="wClose" class="btn ghost">Close</button></div></div></div>
+<div id="choice" class="chmodal" hidden role="dialog" aria-modal="true" aria-label="A choice"><div class="chcard" id="chCard"></div></div>
+<div id="intro" class="intro" hidden><canvas id="introCv"></canvas><p id="introText" class="introtx"></p><div class="introft"><div id="introDots" class="idots"></div><span class="ihint">click to continue</span></div><button type="button" id="introSkip" class="btn ghost iskip">Skip</button></div>
+<div id="create" class="create" hidden role="dialog" aria-modal="true" aria-labelledby="crTitle"><div class="crbox">
+  <div class="chk">The first act</div><h2 id="crTitle">Breathe life into them</h2><p class="d">The earth is empty. Shape the first of your creatures; everything after, they will become on their own.</p>
+  <div class="lbl">Their form</div><div id="crForms" class="crforms"></div>
+  <div class="crrow"><div><div class="lbl">Their nature</div><div id="crTemp" class="seg2"></div></div><div><div class="lbl">Where they wake</div><div id="crLand" class="seg2"></div></div></div>
+  <div class="lbl">Rival immortals</div><div class="seg2"><button type="button" data-crr="2" aria-pressed="true">Two rivals</button><button type="button" data-crr="3" aria-pressed="false">Three rivals</button></div>
+  <div class="lbl">Their colour</div><input type="range" id="crHue" min="0" max="359" aria-label="Colour of your creatures">
+  <div class="chrow"><button type="button" id="crGo" class="btn primary big">Breathe life</button></div></div></div>
+<div id="act" class="chmodal" hidden role="dialog" aria-modal="true" aria-label="The hand of the Maker"><div class="chcard actcard" id="actCard"></div></div>
+<div id="vision" class="chmodal" hidden role="dialog" aria-modal="true" aria-label="A vision"><div class="chcard viscard" id="visCard"></div></div>
+<div id="defeat" class="chmodal" hidden role="dialog" aria-modal="true" aria-label="You are forgotten"><div class="chcard" id="defCard"></div></div>
+<div id="peek" class="peek" hidden role="tooltip"></div>
+</body>
+</html>
