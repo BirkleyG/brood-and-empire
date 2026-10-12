@@ -1,6 +1,7 @@
 import { anthropicSampler } from './providers/anthropic';
 import { PROVIDERS, providerInfo } from './providers/index';
 import { compatSampler } from './providers/openai-compatible';
+import { cachedModels, fetchModels, staticModels, type ModelOption } from './models';
 import { clearSettings, defaultSettings, loadSettings, saveSettings } from './settings';
 import { AIError, type AISettings, type ProviderId, type Sampler } from './types';
 
@@ -157,11 +158,18 @@ function renderBadge() {
 // Draft edited in the panel; only written to `settings` on Save.
 let draft: AISettings;
 
+// Per-tier "Other…" state, so an empty custom field stays open across re-renders.
+let otherOpen = { quick: false, default: false };
+let modelsNote = '';
+
 function openPanel() {
   draft = JSON.parse(JSON.stringify(settings));
+  otherOpen = { quick: false, default: false };
+  modelsNote = '';
   renderPanel();
   modal.hidden = false;
   $<HTMLSelectElement>('#aiProv', modal).focus();
+  loadModels();
 }
 
 function closePanel() {
@@ -194,10 +202,10 @@ function renderPanel(status = '') {
     <div class="airow"><input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key" value="${esc(draft.keys[draft.provider] ?? '')}"><button type="button" class="btn" id="aiShow">Show</button></div>
     <p class="aismall">Saved only in this browser and sent only to ${esc(info.name)}.${info.keyUrl ? ` <a href="${info.keyUrl}" target="_blank" rel="noopener">Get a key</a>` : ''}</p>` : ''}
     ${showModels ? `<div class="aigrid">
-      <div><label class="ail" for="aiMQ">Quick model</label><input id="aiMQ" type="text" spellcheck="false" autocomplete="off" placeholder="${esc(info.defaultModels?.quick ?? info.modelHint ?? '')}" value="${esc(m.quick ?? '')}"></div>
-      <div><label class="ail" for="aiMD">Writing model</label><input id="aiMD" type="text" spellcheck="false" autocomplete="off" placeholder="${esc(info.defaultModels?.default ?? info.modelHint ?? '')}" value="${esc(m.default ?? '')}"></div>
+      ${modelField('quick', 'Quick model', m.quick ?? '')}
+      ${modelField('default', 'Writing model', m.default ?? '')}
     </div>
-    <p class="aismall">${info.defaultModels ? 'Leave blank to use the defaults shown.' : 'If you fill in only one, it is used for everything.'}</p>` : ''}
+    <p class="aismall">${esc(modelsNote || (info.defaultModels ? 'The quick model reads your words to the Oracle; the writing model tells the story.' : 'If you choose only one, it is used for everything.'))}</p>` : ''}
     <div class="aistat" id="aiStat" role="status" aria-live="polite">${status}</div>
     <div class="aift">
       <button type="button" class="btn" id="aiForget">Forget saved keys</button>
@@ -211,8 +219,28 @@ function renderPanel(status = '') {
   $<HTMLSelectElement>('#aiProv', modal).addEventListener('change', (e) => {
     readFields();
     draft.provider = (e.target as HTMLSelectElement).value as ProviderId;
+    otherOpen = { quick: false, default: false };
+    modelsNote = '';
     renderPanel();
+    loadModels();
     $<HTMLSelectElement>('#aiProv', modal).focus();
+  });
+  for (const tier of ['quick', 'default'] as const) {
+    $<HTMLSelectElement>(`#${tierId(tier)}Sel`, modal)?.addEventListener('change', (e) => {
+      const other = (e.target as HTMLSelectElement).value === OTHER;
+      otherOpen[tier] = other;
+      const input = $<HTMLInputElement>(`#${tierId(tier)}`, modal);
+      input.hidden = !other;
+      if (other) input.focus();
+    });
+  }
+  $('#aiKey', modal)?.addEventListener('change', () => {
+    readFields();
+    loadModels();
+  });
+  $('#aiBase', modal)?.addEventListener('change', () => {
+    readFields();
+    loadModels();
   });
   $('#aiShow', modal)?.addEventListener('click', (e) => {
     const k = $<HTMLInputElement>('#aiKey', modal);
@@ -247,9 +275,7 @@ function readFields() {
   const p = draft.provider;
   const key = $<HTMLInputElement>('#aiKey', modal);
   if (key) draft.keys[p] = key.value.trim();
-  const q = $<HTMLInputElement>('#aiMQ', modal);
-  const d = $<HTMLInputElement>('#aiMD', modal);
-  if (q || d) draft.models[p] = { quick: q?.value.trim() || '', default: d?.value.trim() || '' };
+  if ($('#aiMQSel', modal)) draft.models[p] = { quick: readModel('quick'), default: readModel('default') };
   const base = $<HTMLInputElement>('#aiBase', modal);
   if (base) draft.customBaseUrl = base.value.trim();
 }
@@ -275,4 +301,74 @@ async function testDraft() {
   } catch (e) {
     stat.textContent = e instanceof Error ? e.message : String(e);
   }
+}
+
+// ---------------------------------------------------------------- model pickers
+
+const OTHER = '__other';
+const tierId = (tier: 'quick' | 'default') => (tier === 'quick' ? 'aiMQ' : 'aiMD');
+
+function modelOptions(): ModelOption[] {
+  return cachedModels(draft) ?? staticModels(draft.provider);
+}
+
+/** A dropdown of known models plus "Other…", which reveals a text field for any model id. */
+function modelField(tier: 'quick' | 'default', label: string, value: string) {
+  const info = providerInfo(draft.provider);
+  const list = modelOptions();
+  const def = info.defaultModels?.[tier];
+  const known = !value || list.some((o) => o.id === value);
+  const other = otherOpen[tier] || !known;
+  const id = tierId(tier);
+  const first = def
+    ? `<option value="">Default (${esc(def)})</option>`
+    : `<option value="">${list.length ? 'Choose a model…' : 'No list yet: choose Other'}</option>`;
+  const opts = list
+    .map((o) => `<option value="${esc(o.id)}"${!other && o.id === value ? ' selected' : ''}>${esc(o.label)}</option>`)
+    .join('');
+  return `<div><label class="ail" for="${id}Sel">${label}</label>
+    <select id="${id}Sel">${first}${opts}<option value="${OTHER}"${other ? ' selected' : ''}>Other…</option></select>
+    <input id="${id}" type="text" spellcheck="false" autocomplete="off" aria-label="${label} id" placeholder="${esc(info.modelHint ?? 'Type a model id')}" value="${esc(other ? value : '')}"${other ? '' : ' hidden'}></div>`;
+}
+
+function readModel(tier: 'quick' | 'default'): string {
+  const sel = $<HTMLSelectElement>(`#${tierId(tier)}Sel`, modal);
+  if (!sel) return '';
+  if (sel.value === OTHER) return $<HTMLInputElement>(`#${tierId(tier)}`, modal).value.trim();
+  return sel.value;
+}
+
+/** Fetch the provider's model list for the dropdowns. Typing a model via "Other…" always works. */
+async function loadModels() {
+  const info = providerInfo(draft.provider);
+  const listable = draft.provider === 'anthropic' || !!info.baseUrl || (draft.provider === 'custom' && !!draft.customBaseUrl);
+  if (!listable || cachedModels(draft)) return;
+  if (info.needsKey && !draft.keys[draft.provider]) {
+    setModelsNote(info.defaultModels ? '' : 'Paste your key to load this provider\'s models, or choose Other and type one.');
+    return;
+  }
+  if (IN_ARTIFACT) {
+    setModelsNote(info.defaultModels ? '' : 'The model list can\'t load inside claude.ai. Choose Other to type a model id.');
+    return;
+  }
+  const want = JSON.stringify([draft.provider, draft.keys[draft.provider], draft.customBaseUrl]);
+  setModelsNote('Loading models…');
+  try {
+    const list = await fetchModels(draft);
+    if (want !== JSON.stringify([draft.provider, draft.keys[draft.provider], draft.customBaseUrl])) return;
+    setModelsNote(`${list.length} models available from ${info.short}.`);
+  } catch (e) {
+    if (want !== JSON.stringify([draft.provider, draft.keys[draft.provider], draft.customBaseUrl])) return;
+    setModelsNote(`Couldn't load the model list (${e instanceof Error ? e.message : e}). Choose Other to type a model id.`);
+  }
+}
+
+function setModelsNote(note: string) {
+  modelsNote = note;
+  if (modal.hidden) return;
+  readFields();
+  const active = document.activeElement?.id;
+  const status = $('#aiStat', modal)?.textContent ?? '';
+  renderPanel(esc(status));
+  if (active) document.getElementById(active)?.focus();
 }

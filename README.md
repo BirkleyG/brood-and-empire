@@ -12,6 +12,18 @@ npm run dev          # http://localhost:5173
 npm run build        # typecheck + production build in dist/
 ```
 
+## Test it
+
+1. `npm run dev` and open http://localhost:5173. Vite reloads the page as you edit files.
+2. Click **AI** in the header, pick a provider, paste a key, choose models, and press **Test**.
+   A short greeting from the model means it's connected. **Save** to use it in the game.
+3. Free ways to test AI: a Gemini or Groq free-tier key, an OpenRouter `:free` model, or
+   Ollama on your machine (`OLLAMA_ORIGINS=http://localhost:5173 ollama serve`).
+4. `npm run build` checks types and produces the release build; `npm run preview` serves it.
+
+Each model picker lists the provider's models (fetched with your key) and ends with
+**Other…**, which lets you type any model id.
+
 ## AI: bring your own key
 
 Open **AI** in the header to choose a provider. Keys are saved only in the player's

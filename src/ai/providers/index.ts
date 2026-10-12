@@ -83,7 +83,7 @@ export const PROVIDERS: ProviderInfo[] = [
   },
   {
     id: 'custom',
-    short: 'Your server',
+    short: 'Custom',
     name: 'Other OpenAI-compatible server',
     blurb: 'Any server that speaks the /chat/completions API, such as LM Studio or vLLM.',
     needsKey: false,
