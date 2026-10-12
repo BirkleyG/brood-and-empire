@@ -1,15 +1,23 @@
-import { ARCH, CONCEPTS, CTRAITS, CTRAIT_WORD, ERAS, GLOSS, GOVS, NUMW, PERSONAL, QUIRKS, RULES, TECH, TRAITS, TRAIT_LABEL, VALUES, VALUE_LABEL, archetypeOf, bodyDesc, cap, clamp, creatureGenome, gdist, hueDist, lerp, mulberry32, nEyes, nLimbs } from './data.js';
+import { ARCH, WORLD_SIZES, CONCEPTS, CTRAITS, CTRAIT_WORD, ERAS, GLOSS, GOVS, NUMW, PERSONAL, QUIRKS, RULES, TECH, TRAITS, TRAIT_LABEL, VALUES, VALUE_LABEL, archetypeOf, bodyDesc, cap, clamp, creatureGenome, gdist, hueDist, lerp, mulberry32, nEyes, nLimbs } from './data.js';
 import { ALPHA_POOLS, SCRIPT_INFO, SYLL_POOLS, writeScript } from './scripts.js';
 
 function makeSim(seed,opts={}){
   const R=mulberry32(seed);
-  const W=2400,H=1560,TS=20,GW=W/TS,GH=Math.ceil(H/TS);
-  const CAP=opts.cap||520;
+  // World size is ONE parameter: opts.size names a preset in WORLD_SIZES (data.js). 'standard' is the original
+  // 2400x1560 world and must stay bit-for-bit identical (same R() draws in the same order) so old seeds replay.
+  // Gameplay distances (war reach, trade, unrest per distance, settling) stay in absolute world units on purpose:
+  // a bigger map should mean more room and more peoples, not stretched distances. Counts (herds, arrivals, caps)
+  // scale with area instead: AR = area ratio to Standard, LIN = linear ratio.
+  const SIZE=WORLD_SIZES[opts.size]?opts.size:'standard',SP=WORLD_SIZES[SIZE];
+  const W=SP.W,H=SP.H,TS=20,GW=W/TS,GH=Math.ceil(H/TS);
+  const AR=W*H/(2400*1560),LIN=Math.sqrt(AR);
+  const CAP=opts.cap||SP.cap;
   const gauss=()=>{let u=0,v=0;while(!u)u=R();while(!v)v=R();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)};
   const pick=a=>a[Math.floor(R()*a.length)];
   const shuffle=a=>{const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(R()*(i+1));[b[i],b[j]]=[b[j],b[i]]}return b};
-  const S={roads:{},seed,W,H,TS,GW,GH,year:0,agents:[],facs:[],setts:[],events:[],cairns:[],ruins:[],routes:[],pulses:[],fxq:[],pophist:[],battles:{},rels:{},chars:[],langs:[],names:[],wonders:[],nukes:0,blights:[],nextId:1,world:{foodMult:1,foodUntil:0,mutBurst:0,mutUntil:0},yearAcc:0,onEvent:null,mutRate:1,terrainDirty:false,livePop:0};
+  const S={roads:{},seed,size:SIZE,cap:CAP,W,H,TS,GW,GH,year:0,agents:[],facs:[],setts:[],events:[],cairns:[],ruins:[],routes:[],pulses:[],fxq:[],pophist:[],battles:{},rels:{},chars:[],langs:[],names:[],wonders:[],nukes:0,blights:[],nextId:1,world:{foodMult:1,foodUntil:0,mutBurst:0,mutUntil:0},yearAcc:0,onEvent:null,mutRate:1,terrainDirty:false,dirtyBox:null,radDirty:false,livePop:0};
   const id=()=>S.nextId++;
+  const agentById=new Map();const reindexAgents=()=>{agentById.clear();for(const a of S.agents)agentById.set(a.id,a)};
   const yr=()=>Math.floor(S.year);
 
   // ---------- terrain ----------
@@ -18,9 +26,24 @@ function makeSim(seed,opts={}){
   const fbm=(x,y)=>(vn(x,y)*.5+vn(x*2.03,y*2.03)*.25+vn(x*4.1,y*4.1)*.125+vn(x*8.3,y*8.3)*.0625)/.9375;
   const ox=R()*100,oy=R()*100;
   const hgt=new Float32Array(GW*GH),moi=new Float32Array(GW*GH);
-  for(let j=0;j<GH;j++)for(let i=0;i<GW;i++){const dx=(i/GW-.5)*2,dy=(j/GH-.5)*2,d=Math.sqrt(dx*dx*.8+dy*dy);hgt[j*GW+i]=fbm(i/17+ox,j/17+oy)*.8+.35-d*.32;moi[j*GW+i]=fbm(i/13+oy+50,j/13+ox+50)}
+  // Standard keeps the original single-island formula. Larger worlds keep the same noise frequency per world unit
+  // (same detail), but the land is laid out as ~3*LIN separate continents: a soft mask from randomly placed, well-spaced,
+  // warped ellipses raises the ground, so seas open up between them and the landmass count grows with area.
+  // Moisture also gets latitude bands so deserts and wet belts repeat across a big map.
+  const BIG=LIN>1.001;
+  let conts=null;const nC=Math.round(3*LIN),rr=0.7*Math.sqrt(0.5*W*H/(Math.PI*nC));
+  if(BIG){conts=[];
+    for(let c=0;c<nC;c++){let best=null,bd=-1;for(let t=0;t<14;t++){const x=W*(.08+.84*R()),y=H*(.1+.8*R());let d=1e9;for(const o of conts)d=Math.min(d,Math.hypot(o.x-x,o.y-y));if(conts.length===0)d=1e9-t;if(d>bd){bd=d;best={x,y}}}
+      conts.push({x:best.x,y:best.y,ax:rr*(0.75+R()*0.6),ay:rr*(0.75+R()*0.6)})}}
+  const sstep=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t)};
+  for(let j=0;j<GH;j++)for(let i=0;i<GW;i++){const dx=(i/GW-.5)*2,dy=(j/GH-.5)*2,d=Math.sqrt(dx*dx*.8+dy*dy);
+    if(!BIG){hgt[j*GW+i]=fbm(i/17+ox,j/17+oy)*.8+.35-d*.32;moi[j*GW+i]=fbm(i/13+oy+50,j/13+ox+50)}
+    else{const px=i*TS,py=j*TS,wx=(fbm(i/40+ox+300,j/40+oy+300)-.5)*rr*1.3,wy=(fbm(i/40+oy+700,j/40+ox+700)-.5)*rr*1.3;
+      let m=0;for(const c of conts){const u=(px+wx-c.x)/c.ax,v=(py+wy-c.y)/c.ay,g=Math.exp(-(u*u+v*v));if(g>m)m=g}
+      hgt[j*GW+i]=fbm(i/17+ox,j/17+oy)*.55+.2+sstep(.12,.62,m)*.55;
+      moi[j*GW+i]=fbm(i/13+oy+50,j/13+ox+50)+.2*Math.sin(j/GH*Math.PI*(LIN+1)+ox)}}
   const sorted=[...hgt].sort((a,b)=>a-b),q=p=>sorted[Math.floor(p*(sorted.length-1))];
-  const tDeep=q(.30),tShal=q(.40),tRock=q(.94),ms=[...moi].sort((a,b)=>a-b),mDry=ms[Math.floor(ms.length*.25)],mWet=ms[Math.floor(ms.length*.62)];
+  const tDeep=q(BIG?.40:.30),tShal=q(BIG?.51:.40),tRock=q(.94),ms=[...moi].sort((a,b)=>a-b),mDry=ms[Math.floor(ms.length*.25)],mWet=ms[Math.floor(ms.length*.62)];
   const ter=new Uint8Array(GW*GH),food=new Float32Array(GW*GH),fmax=new Float32Array(GW*GH),rad=new Float32Array(GW*GH);
   const FM=[2.5,4,8,10,3,1.2];
   for(let k=0;k<GW*GH;k++){const h=hgt[k],m=moi[k];let t=h<tDeep?0:h<tShal?1:h>tRock?5:m>mWet?3:m<mDry?4:2;ter[k]=t;fmax[k]=FM[t]*(0.8+R()*0.4);food[k]=fmax[k]}
@@ -31,8 +54,9 @@ function makeSim(seed,opts={}){
   const tMult=(a,x,y)=>{const t=ter[tIdx(x,y)],g=a.g;if(g.flight>0.5)return 1.1;if(t<=1)return 0.35+g.aquatic*0.9+(S.facs[a.fac].tech.navigation?0.4:0);if(t===5)return 0.55;if(t===3)return 0.85;return 1};
   const TN={0:['Sea','Deep','Sound'],1:['Shallows','Shoals','Bay'],2:['Plain','Meadows','Downs'],3:['Wood','Thicket','Weald'],4:['Waste','Barrens','Dustlands'],5:['Teeth','Crags','Heights']};
   const TA=['Ashen','Weeping','Hollow','Glass','Red','Silent','Broken','Low','Pale','Sunken','Bitter','Bright','Cold','Grey','Drowned','Singing','Crooked','Last'];
-  S.regions=[];for(let rj=0;rj<3;rj++)for(let ri=0;ri<4;ri++){const cnt=[0,0,0,0,0,0];for(let j=Math.floor(rj*GH/3);j<Math.floor((rj+1)*GH/3);j++)for(let i=ri*GW/4;i<(ri+1)*GW/4;i++)cnt[ter[j*GW+i]]++;let best=0;for(let t=0;t<6;t++)if(cnt[t]>cnt[best])best=t;S.regions.push('the '+pick(TA)+' '+pick(TN[best]))}
-  const regionName=(x,y)=>S.regions[clamp(Math.floor(y/H*3),0,2)*4+clamp(Math.floor(x/W*4),0,3)];S.regionName=regionName;
+  const RX=4*Math.round(LIN),RY=3*Math.round(LIN);// region grid: same ~600x520 cell size at every world size
+  S.regions=[];for(let rj=0;rj<RY;rj++)for(let ri=0;ri<RX;ri++){const cnt=[0,0,0,0,0,0];for(let j=Math.floor(rj*GH/RY);j<Math.floor((rj+1)*GH/RY);j++)for(let i=Math.floor(ri*GW/RX);i<Math.floor((ri+1)*GW/RX);i++)cnt[ter[j*GW+i]]++;let best=0;for(let t=0;t<6;t++)if(cnt[t]>cnt[best])best=t;S.regions.push('the '+pick(TA)+' '+pick(TN[best]))}
+  const regionName=(x,y)=>S.regions[clamp(Math.floor(y/H*RY),0,RY-1)*RX+clamp(Math.floor(x/W*RX),0,RX-1)];S.regionName=regionName;
   function landPoint(){for(let t=0;t<500;t++){const x=40+R()*(W-80),y=40+R()*(H-80),tt=ter[tIdx(x,y)];if((tt===2||tt===3)&&rad[tIdx(x,y)]<0.1)return{x,y}}return{x:W/2,y:H/2}}
 
   // ---------- language ----------
@@ -88,12 +112,13 @@ function makeSim(seed,opts={}){
   // ---------- genomes ----------
   function baseGenome(over){const g={};for(const k of TRAITS)g[k]=clamp(0.2+R()*0.15);Object.assign(g,over);return g}
   function mutate(g,f,rate,s){
-    const c={...g};delete c._macro;const radHere=s?rad[tIdx(s.x,s.y)]:0;const burst=(S.world.mutBurst>0?3:1)*(1+radHere*6);const r=rate*burst*S.mutRate;
+    const c={...g};c._macro=undefined;const radHere=s?rad[tIdx(s.x,s.y)]:0;const burst=(S.world.mutBurst>0?3:1)*(1+radHere*6);const r=rate*burst*S.mutRate;
     for(const k of TRAITS)c[k]=clamp(c[k]+gauss()*0.04*r+(f.bias[k]||0)*0.3+(f.current[k]||0));
     if(R()<0.014*r){const k=pick(TRAITS);c[k]=clamp(c[k]+(R()<.5?-1:1)*(0.22+R()*0.3));c._macro=k}
     c.hue=((c.hue+gauss()*1.5*r)%360+360)%360;return c;
   }
-  function meanGenome(list){const g={};for(const k of TRAITS)g[k]=0;let hx=0,hy=0;for(const a of list){for(const k of TRAITS)g[k]+=a.g[k];hx+=Math.cos(a.g.hue*Math.PI/180);hy+=Math.sin(a.g.hue*Math.PI/180)}for(const k of TRAITS)g[k]/=list.length;g.hue=((Math.atan2(hy,hx)*180/Math.PI)+360)%360;return g}
+  const NT=TRAITS.length,MG=new Float64Array(NT);
+  function meanGenome(list){MG.fill(0);let hx=0,hy=0;for(const a of list){const ag=a.g;for(let i=0;i<NT;i++)MG[i]+=ag[TRAITS[i]];hx+=Math.cos(ag.hue*Math.PI/180);hy+=Math.sin(ag.hue*Math.PI/180)}const g={};for(let i=0;i<NT;i++)g[TRAITS[i]]=MG[i]/list.length;g.hue=((Math.atan2(hy,hx)*180/Math.PI)+360)%360;return g}
   function valuesFrom(g){return{martial:clamp(g.aggression*.7+g.carnivory*.3),faith:clamp(g.mystic*.9+.05),art:clamp(g.weirdness*.45+g.sociality*.25+g.glow*.3),trade:clamp(g.hoarding*.9+.05),knowledge:clamp(g.intellect*.8+g.curiosity*.2),order:clamp(g.sociality*.5+(1-g.weirdness)*.35),harmony:clamp(g.symbiosis*.6+(1-g.carnivory)*.35)}}
   function newCurrent(f){f.current={};for(const k of shuffle(TRAITS).slice(0,3))f.current[k]=(R()<.5?-1:1)*(0.015+R()*0.02);f.currentSince=S.year}
 
@@ -146,7 +171,7 @@ function makeSim(seed,opts={}){
   S.traitWords=traitWords;
   function rulerOf(f){return f.ruler!=null?S.chars[f.ruler]:null}
   function attachFac(f){f.ruler_cruelty=()=>{const r=rulerOf(f);return r?r.traits.cruelty:0.5}}
-  S.rng=R;S.rehydrate=()=>{for(const f of S.facs)attachFac(f);rebuild()};
+  S.rng=R;S.rehydrate=()=>{for(const f of S.facs)attachFac(f);reindexAgents();rebuild()};
   function pickCourtAgent(f,s,pref){const m=(s?s.members:[]).filter(a=>!a.dead&&a.char==null&&!a.titan&&a.age>6&&a.age<a.life*0.7);if(!m.length)return null;if(pref==='strong')return m.reduce((a,b)=>b.dmg*b.maxhp>a.dmg*a.maxhp?b:a,m[0]);if(pref==='young')return m.reduce((a,b)=>b.age<a.age?b:a,m[0]);return pick(m)}
 
   // ---------- factions ----------
@@ -191,7 +216,7 @@ function makeSim(seed,opts={}){
   }
   function newAgent(f,g,x,y,home){
     const a={id:id(),fac:f.id,g,x,y,heading:R()*6.28,hp:0,energy:70,age:0,state:'idle',tx:x,ty:y,think:R()*.5,cd:0,carry:0,home:home?home.id:null,kills:0,gen:0,phase:R()*10,moving:0,role:null,flash:0,char:null,job:null,why:'',fatigue:R()*0.4,house:null,t:0};
-    stats(a);a.hp=a.maxhp;S.agents.push(a);f.pop++;f.stats.births++;return a;
+    stats(a);a.hp=a.maxhp;S.agents.push(a);agentById.set(a.id,a);f.pop++;f.stats.births++;return a;
   }
 
   // ---------- towns: buildings, streets, fields ----------
@@ -249,11 +274,11 @@ function makeSim(seed,opts={}){
   const granaryOf=s=>s.bld.find(b=>b.t==='granary'&&b.prog>=1)||s.bld[0];
   function houseOf(a,s){let b=a.house!=null?s.bld[a.house]:null;if(b&&b.cap&&b.prog>=1&&a.houseOf===s.id)return b;a.house=null;const occ={};for(const m of s.members)if(!m.dead&&m.house!=null&&m.houseOf===s.id)occ[m.house]=(occ[m.house]||0)+1;
     for(let i=0;i<s.bld.length;i++){const bb=s.bld[i];if(bb.cap&&bb.prog>=1&&(occ[i]||0)<bb.cap){a.house=i;a.houseOf=s.id;return bb}}return s.bld[0]}
-  function pickPlot(a,s){let best=null,bd=1e9;for(const p of s.plots){if(p.worker!=null&&p.worker!==a.id){const w=S.agents.find(x=>x.id===p.worker);if(w&&!w.dead&&w.state==='farm')continue;p.worker=null}const d=Math.hypot(p.x-a.x,p.y-a.y)-(p.grow>0.7?40:0);if(d<bd){bd=d;best=p}}return best}
+  function pickPlot(a,s){let best=null,bd=1e9;for(const p of s.plots){if(p.worker!=null&&p.worker!==a.id){const w=agentById.get(p.worker);if(w&&!w.dead&&w.state==='farm')continue;p.worker=null}const d=Math.hypot(p.x-a.x,p.y-a.y)-(p.grow>0.7?40:0);if(d<bd){bd=d;best=p}}return best}
 
   // ---------- wild herds ----------
   S.game=[];S.herds=[];
-  function initGame(){for(let h=0;h<26;h++){const p=landPoint();S.herds.push({x:p.x,y:p.y,tx:p.x,ty:p.y,t:R()*20});for(let i=0;i<4+Math.floor(R()*5);i++)S.game.push({id:id(),x:p.x+(R()-.5)*40,y:p.y+(R()-.5)*40,h:R()*6.28,herd:h,hp:18,size:0.6+R()*0.5,tx:p.x,ty:p.y,t:R()*2,dead:false,moving:0,flee:0,phase:R()*6})}}
+  function initGame(){for(let h=0;h<Math.round(26*AR);h++){const p=landPoint();S.herds.push({x:p.x,y:p.y,tx:p.x,ty:p.y,t:R()*20});for(let i=0;i<4+Math.floor(R()*5);i++)S.game.push({id:id(),x:p.x+(R()-.5)*40,y:p.y+(R()-.5)*40,h:R()*6.28,herd:h,hp:18,size:0.6+R()*0.5,tx:p.x,ty:p.y,t:R()*2,dead:false,moving:0,flee:0,phase:R()*6})}}
   function stepGame(dt){
     for(const H of S.herds){H.t-=dt;if(H.t<=0){H.t=15+R()*25;const p=landPoint();const ang=Math.atan2(p.y-H.y,p.x-H.x),d=Math.min(260,Math.hypot(p.x-H.x,p.y-H.y));H.tx=H.x+Math.cos(ang)*d;H.ty=H.y+Math.sin(ang)*d}const d=Math.hypot(H.tx-H.x,H.ty-H.y);if(d>2){H.x+=(H.tx-H.x)/d*3.5*dt;H.y+=(H.ty-H.y)/d*3.5*dt}}
     for(const g of S.game){if(g.dead)continue;g.t-=dt;g.phase+=dt*(g.moving?(g.flee>0?14:5):0.5);if(g.flee>0)g.flee-=dt;
@@ -262,9 +287,9 @@ function makeSim(seed,opts={}){
       if(d>1){const nx=g.x+dx/d*Math.min(sp,d),ny=g.y+dy/d*Math.min(sp,d);if(nx>8&&ny>8&&nx<W-8&&ny<H-8&&ter[tIdx(nx,ny)]>=2){g.x=nx;g.y=ny;g.h=Math.atan2(dy,dx);g.moving=1}else{g.t=0;g.tx=g.x;g.ty=g.y;g.moving=0}}else g.moving=0;
       if(rad[tIdx(g.x,g.y)]>0.2){g.hp-=dt*6;if(g.hp<=0)g.dead=true}}
   }
-  function yearlyGame(){S.game=S.game.filter(g=>!g.dead);const n=S.game.length;for(const g of S.game.slice()){if(S.game.length>=240)break;const k=tIdx(g.x,g.y);if((ter[k]===2||ter[k]===3)&&food[k]>2&&R()<0.1*(1-n/260)){food[k]-=1;S.game.push({id:id(),x:g.x+(R()-.5)*8,y:g.y+(R()-.5)*8,h:g.h,herd:g.herd,hp:18,size:0.5+R()*0.6,tx:g.x,ty:g.y,t:1,dead:false,moving:0,flee:0,phase:0})}}
-    if(n<40){const p=landPoint();S.herds.push({x:p.x,y:p.y,tx:p.x,ty:p.y,t:5});for(let i=0;i<5;i++)S.game.push({id:id(),x:p.x+(R()-.5)*30,y:p.y+(R()-.5)*30,h:0,herd:S.herds.length-1,hp:18,size:0.7,tx:p.x,ty:p.y,t:1,dead:false,moving:0,flee:0,phase:0})}}
-  function nearestGame(x,y,r){let b=null,bd=r;for(const g of S.game){if(g.dead)continue;const d=Math.hypot(g.x-x,g.y-y);if(d<bd){bd=d;b=g}}return b}
+  function yearlyGame(){S.game=S.game.filter(g=>!g.dead);const n=S.game.length;for(const g of S.game.slice()){if(S.game.length>=Math.round(240*AR))break;const k=tIdx(g.x,g.y);if((ter[k]===2||ter[k]===3)&&food[k]>2&&R()<0.1*(1-n/(260*AR))){food[k]-=1;S.game.push({id:id(),x:g.x+(R()-.5)*8,y:g.y+(R()-.5)*8,h:g.h,herd:g.herd,hp:18,size:0.5+R()*0.6,tx:g.x,ty:g.y,t:1,dead:false,moving:0,flee:0,phase:0})}}
+    if(n<Math.round(40*AR)){const p=landPoint();S.herds.push({x:p.x,y:p.y,tx:p.x,ty:p.y,t:5});for(let i=0;i<5;i++)S.game.push({id:id(),x:p.x+(R()-.5)*30,y:p.y+(R()-.5)*30,h:0,herd:S.herds.length-1,hp:18,size:0.7,tx:p.x,ty:p.y,t:1,dead:false,moving:0,flee:0,phase:0})}}
+  function nearestGame(x,y,r){let b=null,bd=r;for(const g of S.game){if(g.dead||g.x-x>=bd||x-g.x>=bd||g.y-y>=bd||y-g.y>=bd)continue;const d=Math.hypot(g.x-x,g.y-y);if(d<bd){bd=d;b=g}}return b}
 
   // ---------- armies ----------
   function armySlot(A,i){const row=Math.floor(i/5),col=(i%5)-2;const back=-row*9,side=col*9;return{x:A.x+Math.cos(A.h)*back-Math.sin(A.h)*side,y:A.y+Math.sin(A.h)*back+Math.cos(A.h)*side}}
@@ -300,10 +325,16 @@ function makeSim(seed,opts={}){
   log('dawn',3,'The First Fire',`In ${regionName(start.x,start.y)}, a small band wakes to thought: ${fA.glyph}, the ${fA.gloss}, ${bodyDesc(fA.g)}. They name things only with pictures. As far as they know, they are alone in the world.`,start.x,start.y,[fA]);
 
   // ---------- spatial hash ----------
-  const HC=50,HW=Math.ceil(W/HC),HH=Math.ceil(H/HC);let grid=[];
-  function rebuild(){grid=Array.from({length:HW*HH},()=>[]);for(const a of S.agents){if(a.dead)continue;const i=clamp(Math.floor(a.x/HC),0,HW-1),j=clamp(Math.floor(a.y/HC),0,HH-1);grid[j*HW+i].push(a)}}
-  function query(x,y,r,out){out.length=0;const i0=clamp(Math.floor((x-r)/HC),0,HW-1),i1=clamp(Math.floor((x+r)/HC),0,HW-1),j0=clamp(Math.floor((y-r)/HC),0,HH-1),j1=clamp(Math.floor((y+r)/HC),0,HH-1);for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++)for(const a of grid[j*HW+i])out.push(a);return out}
+  // Flat counting-sort grid (no per-tick array allocation). Cell order and in-cell order match the old nested-array grid.
+  const HC=50,HW=Math.ceil(W/HC),HH=Math.ceil(H/HC);const gStart=new Int32Array(HW*HH+1),gCell=new Int32Array(HW*HH),gFac=new Int32Array(HW*HH);let gItems=[],gCellOf=new Int32Array(1024),gStale=false;// gStale: someone changed people/titan since rebuild(), so gFac can no longer be trusted this step
+  function rebuild(){const ag=S.agents,n=ag.length;if(gCellOf.length<n)gCellOf=new Int32Array(Math.ceil(n*1.5));gStale=false;gCell.fill(0);gFac.fill(-1);// gFac: the one people present in a cell, or -2 if mixed or a titan is there
+    for(let q=0;q<n;q++){const a=ag[q];if(a.dead){gCellOf[q]=-1;continue}const c=clamp(Math.floor(a.y/HC),0,HH-1)*HW+clamp(Math.floor(a.x/HC),0,HW-1);gCellOf[q]=c;gCell[c]++;gFac[c]=a.titan?-2:gFac[c]===-1?a.fac:gFac[c]===a.fac?a.fac:-2}
+    let acc=0;for(let c=0;c<HW*HH;c++){gStart[c]=acc;acc+=gCell[c];gCell[c]=gStart[c]}gStart[HW*HH]=acc;gItems.length=acc;
+    for(let q=0;q<n;q++){const c=gCellOf[q];if(c>=0)gItems[gCell[c]++]=ag[q]}}
+  function query(x,y,r,out){out.length=0;const i0=clamp(Math.floor((x-r)/HC),0,HW-1),i1=clamp(Math.floor((x+r)/HC),0,HW-1),j0=clamp(Math.floor((y-r)/HC),0,HH-1),j1=clamp(Math.floor((y+r)/HC),0,HH-1);for(let j=j0;j<=j1;j++){const base=j*HW;for(let q=gStart[base+i0],e=gStart[base+i1+1];q<e;q++)out.push(gItems[q])}return out}
   const buf=[];
+  const FSTRIDE=AR>1.5?Math.ceil(AR/2):1;let fPhase=0;
+  const MAXTITANS=Math.max(2,Math.round(2*LIN));
 
   // ---------- behavior ----------
   function apow(a){return a.hp*a.dmg*(1+a.armorRed)*(1+a.range/30)}
@@ -344,7 +375,7 @@ function makeSim(seed,opts={}){
       log('hero',2,`Rise of ${cname(c)}`,`Among the ${f.name}, one ${bodyDesc(a.g).replace(/ \w+$/,'')} has killed ${a.kills} enemies. ${cap(cname(c))} ${c.role==='general'?'is made general':'becomes a champion'}. People say they are ${traitWords(c).join(' and ')||'unreadable'}.`,a.x,a.y,[f],{g:{...a.g},why:[`${cap(cname(c))} won fame in battle.`]})}
   }
   function makeTitan(a,reason){
-    const f=S.facs[a.fac];a.titan=cap(S.langs[f.lang].stage?compose(S.langs[f.lang],['great','beast']):'Great-Beast')+' '+pick(['the Unmaking','the Hungering','of a Thousand Mouths','the Walking Mountain','the Pale','the Endless']);
+    const f=S.facs[a.fac];gStale=true;a.titan=cap(S.langs[f.lang].stage?compose(S.langs[f.lang],['great','beast']):'Great-Beast')+' '+pick(['the Unmaking','the Hungering','of a Thousand Mouths','the Walking Mountain','the Pale','the Endless']);
     a.g.size=Math.max(a.g.size,0.9);a.g.aggression=Math.max(a.g.aggression,0.85);a.g.spikes=Math.max(a.g.spikes,0.6);a.g.carnivory=Math.max(a.g.carnivory,0.7);
     if(a.char!=null){S.chars[a.char].alive=false;a.char=null}a.role=null;stats(a);a.hp=a.maxhp;a.home=null;a.energy=100;
     log('titan',3,`Birth of ${a.titan}`,`${reason||`Born to the ${f.name} but belonging to no one`}, a monster ${Math.round(a.r*2)} strides wide walks out. ${a.titan} turns on every living thing, its own kin included.`,a.x,a.y,[f],{g:{...a.g},why:[reason||'A monstrous mutation.']});
@@ -380,8 +411,9 @@ function makeSim(seed,opts={}){
   function courtWhy(c,f,s){const r=c.role;return r==='ruler'?`Ruling the ${f.name} from ${s.name}`:r==='heir'?`Heir to ${cname(rulerOf(f))}, waiting`:r==='prophet'?`Interpreting omens for ${cname(rulerOf(f))}`:r==='governor'?`Governing ${s.name}`:r==='general'?`Drilling the army of the ${f.name}`:`Serving at court in ${s.name}`}
   function threat(a){
     const f=S.facs[a.fac];const home=homeOf(a);
-    const near=query(a.x,a.y,a.sight,buf);let foe=null,fd=1e9;
-    for(const o of near){if(o===a||o.dead)continue;if(!hostile(a,o)&&!hostile(o,a))continue;const d=Math.hypot(o.x-a.x,o.y-a.y);if(d<fd){fd=d;foe=o}}
+    // scans the spatial grid in place (same visiting order as query()) and skips same-people neighbours cheaply
+    let foe=null,fd=1e9;{const r=a.sight,i0=clamp(Math.floor((a.x-r)/HC),0,HW-1),i1=clamp(Math.floor((a.x+r)/HC),0,HW-1),j0=clamp(Math.floor((a.y-r)/HC),0,HH-1),j1=clamp(Math.floor((a.y+r)/HC),0,HH-1),af=a.fac,at=a.titan;
+    for(let j=j0;j<=j1;j++){const base=j*HW;for(let ci=i0;ci<=i1;ci++){if(!gStale&&!at&&gFac[base+ci]===af)continue;for(let q=gStart[base+ci],e=gStart[base+ci+1];q<e;q++){const o=gItems[q];if(o===a||o.dead)continue;if(o.fac===af&&!at&&!o.titan)continue;if(!hostile(a,o)&&!hostile(o,a))continue;const d=Math.hypot(o.x-a.x,o.y-a.y);if(d<fd){fd=d;foe=o}}}}}
     if(!foe)return false;
     const weak=a.role==='court'||a.job==='child'||a.job==='elder';
     const defending=home&&Math.hypot(foe.x-home.x,foe.y-home.y)<townRadius(home)+50;
@@ -503,7 +535,7 @@ function makeSim(seed,opts={}){
   }
 
   // what conquest means: plunder, slaughter, chains, burned temples, a people absorbed
-  function sackTown(s,old,attF,wasCap,r){const ru=rulerOf(attF);const cruel=(ru?ru.traits.cruelty:0.5)+(r&&r.goal==='holy'?0.25:0)+(r&&r.goal==='extermination'?0.6:0)+attF.values.martial*0.3;
+  function sackTown(s,old,attF,wasCap,r){gStale=true;const ru=rulerOf(attF);const cruel=(ru?ru.traits.cruelty:0.5)+(r&&r.goal==='holy'?0.25:0)+(r&&r.goal==='extermination'?0.6:0)+attF.values.martial*0.3;
     const dest=capitalOf(attF)||attF.origin;const loot=Math.round(s.store*0.75+(wasCap?old.treasury*0.5:old.treasury*0.1));if(dest.store!=null)dest.store+=s.store*0.75;s.store*=0.15;attF.treasury+=Math.round(wasCap?old.treasury*0.5:old.treasury*0.1);old.treasury*=wasCap?0.4:0.9;
     const burned=Math.floor(s.bld.length*(0.25+cruel*0.3));s.bld.splice(Math.max(0,s.bld.length-burned),burned);
     const res=s.members.filter(m=>!m.dead&&m.char==null&&!m.titan);let killed=0,chained=0,stayed=0;
@@ -514,7 +546,7 @@ function makeSim(seed,opts={}){
     if(wasCap){const lost=Object.keys(old.tech).filter(k=>TECH[k].req.length).sort((a,b)=>old.tech[b]-old.tech[a]).slice(0,R()<cruel?2:1);for(const k of lost)if(R()<0.6)delete old.tech[k];for(const c of S.chars)if(c.alive&&c.fac===old.id&&['prophet','heir'].includes(c.role)&&R()<0.5){const ag=charAgent(c);if(ag)die(ag,'executed');charDeath(c,'killed in the sack of '+s.name)}}
     attF.stats.slaves=(attF.stats.slaves||0)+chained;
     return`${loot>0?`The conquerors carry off ${loot} measures of grain and treasure. `:''}${killed?`${killed} are put to the sword. `:''}${chained?`${chained} are led away in chains to ${dest.name||'the conquerors\' capital'}. `:''}${burned?`${burned} buildings burn${wasCap?', the temples and libraries first':''}. `:''}${stayed?`${stayed} remain, now subjects of the ${attF.name}.`:''}`}
-  function cedeTown(t,L,Wn){const wc=capitalOf(Wn);let caps=0;t.fac=Wn.id;t.owners.push(Wn.id);t.conqueredYr=yr();t.unrest=0.5;t.governor=null;if(wc)wc.store+=t.store*0.5;t.store*=0.5;
+  function cedeTown(t,L,Wn){gStale=true;const wc=capitalOf(Wn);let caps=0;t.fac=Wn.id;t.owners.push(Wn.id);t.conqueredYr=yr();t.unrest=0.5;t.governor=null;if(wc)wc.store+=t.store*0.5;t.store*=0.5;
     for(const a of S.agents){if(a.dead||a.fac!==L.id||a.home!==t.id)continue;if(a.char!=null){const c=S.chars[a.char];if(c&&['ruler','heir'].includes(c.role))continue}if(wc&&R()<0.15){a.home=wc.id;a.slave=L.id;a.state='migrate';caps++}a.fac=Wn.id;L.pop--;Wn.pop++;a.role=a.role==='court'?null:a.role;stats(a)}
     for(const c of S.chars)if(c.alive&&c.fac===L.id&&c.settId===t.id)c.fac=Wn.id;if(L.capital===t.id)L.capital=null;return caps}
   function fallSett(s,a){
@@ -557,7 +589,7 @@ function makeSim(seed,opts={}){
         if(f.quirks.some(q=>q.type==='mimic')){let near=null,nd=600;for(const o of S.setts){if(o.fac===f.id)continue;const d=Math.hypot(o.x-s.x,o.y-s.y);if(d<nd){nd=d;near=o}}if(near){const th=S.facs[near.fac].hue;g.hue=(g.hue+((((th-g.hue)%360+540)%360)-180)*0.04+360)%360}}
         const hs=s.bld.filter(b=>b.cap&&b.prog>=1);const h=hs.length?pick(hs):s.bld[0];
         const a=newAgent(f,g,h.x+(R()-.5)*6,h.y+(R()-.5)*6,s);a.gen=(par?par.gen:0)+1;a.energy=80;a.job='child';s.members.push(a);
-        if(g._macro&&g.size>0.82&&g.aggression>0.66&&R()<.35&&S.year>150&&f.pop>40&&S.agents.filter(x=>x.titan&&!x.dead).length<2)makeTitan(a,rad[tIdx(s.x,s.y)]>0.05?'Born in the poisoned ground near '+s.name:null);
+        if(g._macro&&g.size>0.82&&g.aggression>0.66&&R()<.35&&S.year>150&&f.pop>40&&S.agents.filter(x=>x.titan&&!x.dead).length<MAXTITANS)makeTitan(a,rad[tIdx(s.x,s.y)]>0.05?'Born in the poisoned ground near '+s.name:null);
       }
     }
   }
@@ -629,7 +661,7 @@ function makeSim(seed,opts={}){
     log('succession',1,`${cap(cname(heir))} ${how}`,`After ${cname(dead)}, ${cname(heir)} ${how} and becomes ${rulerTitle(f)} of the ${f.name}.`,cs.x,cs.y,[f],{why,char:heir.id});
   }
   function newCandidates(f){const cs=capitalOf(f);const a=cs?pickCourtAgent(f,cs):null;if(!a)return[];return[newChar(f,'citizen',a)]}
-  function union(A,B,claimant){
+  function union(A,B,claimant){gStale=true;
     const setsB=facSetts(B);for(const s of setsB){s.fac=A.id;s.owners.push(A.id)}for(const a of S.agents)if(!a.dead&&a.fac===B.id){a.fac=A.id;B.pop--;A.pop++;stats(a)}
     for(const c of S.chars)if(c.fac===B.id&&c.alive){c.fac=A.id}
     B.died=yr();B.endCause='union';B.snaps.push({yr:yr(),...snap(B)});
@@ -643,7 +675,7 @@ function makeSim(seed,opts={}){
     const nf=secede(f,rs,rebel,'civil war',[reason,'The realm splits in two.']);
     if(nf){const r=rel(f.id,nf.id);declareWar(nf,f,'succession',[reason],true)}
   }
-  function secede(f,s,leader,kind,why){
+  function secede(f,s,leader,kind,why){gStale=true;
     if(!s||s.fac!==f.id)return null;
     const sets=facSetts(f);const cs=capitalOf(f);if(s===cs)return null;
     const members=s.members.filter(a=>!a.dead);if(members.length<3)return null;
@@ -795,11 +827,14 @@ function makeSim(seed,opts={}){
     if(B.tech.fission&&B.died==null&&!B.cool.nuke){const rb=rulerOf(B);if(rb&&rb.traits.warmth<0.75){S.retaliate=S.retaliate||[];S.retaliate.push([B.id,f.id])}}
   }
   function killZone(x,y,r,spare){for(const a of S.agents){if(a.dead)continue;const d=Math.hypot(a.x-x,a.y-y);if(d<r&&a.fac!==spare){if(d<r*0.6||R()<0.6)die(a,'fire')}}}
-  function poison(x,y,r,v){for(let j=0;j<GH;j++)for(let i=0;i<GW;i++){const d=Math.hypot((i+.5)*TS-x,(j+.5)*TS-y);if(d<r){const k=j*GW+i;rad[k]=Math.min(1,rad[k]+v*(1-d/r)*1.3);food[k]=0}}S.terrainDirty=true}
+  // tile window around a circle (only tiles that can be inside it); loops stay row-major so R() order is unchanged
+  const tileWin=(x,y,r)=>({i0:Math.max(0,Math.floor((x-r)/TS)-1),i1:Math.min(GW-1,Math.ceil((x+r)/TS)),j0:Math.max(0,Math.floor((y-r)/TS)-1),j1:Math.min(GH-1,Math.ceil((y+r)/TS))});
+  const markTerrain=(x,y,r)=>{const b=S.dirtyBox,x0=x-r-TS,y0=y-r-TS,x1=x+r+TS,y1=y+r+TS;S.dirtyBox=b?{x0:Math.min(b.x0,x0),y0:Math.min(b.y0,y0),x1:Math.max(b.x1,x1),y1:Math.max(b.y1,y1)}:{x0,y0,x1,y1};S.terrainDirty=true};
+  function poison(x,y,r,v){const w=tileWin(x,y,r);for(let j=w.j0;j<=w.j1;j++)for(let i=w.i0;i<=w.i1;i++){const d=Math.hypot((i+.5)*TS-x,(j+.5)*TS-y);if(d<r){const k=j*GW+i;rad[k]=Math.min(1,rad[k]+v*(1-d/r)*1.3);food[k]=0}}S.radDirty=true}
   function blight(f,B,why){f.cool.blight=1;const ru=rulerOf(f);if(ru)deed(ru,`unleashed a blight on the ${B.name}`,'blight');
     S.blights.push({by:f.id,target:{...B.g},tname:B.name,until:yr()+18,str:0.12+R()*0.08});for(const o of alive())if(o!==f)note(o.id,f.id,'grudge',o===B?3:0.6,'the engineered blight');f.rep-=0.8;
     log('blight',3,`The ${B.name} Blight`,`The ${f.name} release a disease built to kill only creatures shaped like the ${B.name}. It will spread for years. No one can promise it will stop at its target.`,(capitalOf(B)||B.origin).x,(capitalOf(B)||B.origin).y,[f,B],{why,decider:ru?ru.id:null})}
-  function terraform(f,at,mode,why){f.cool.geo=yr();const want=mode==='salt'?4:f.g.aquatic>0.6?1:3;let n=0;for(let j=0;j<GH;j++)for(let i=0;i<GW;i++){const d=Math.hypot((i+.5)*TS-at.x,(j+.5)*TS-at.y);if(d<140&&R()<1-d/160){const k=j*GW+i;if(ter[k]===0&&want!==1)continue;ter[k]=want;fmax[k]=FM[want]*(mode==='salt'?0.3:1.3);food[k]=Math.min(food[k],fmax[k]);n++}}S.terrainDirty=true;
+  function terraform(f,at,mode,why){f.cool.geo=yr();const want=mode==='salt'?4:f.g.aquatic>0.6?1:3;let n=0;const w=tileWin(at.x,at.y,140);for(let j=w.j0;j<=w.j1;j++)for(let i=w.i0;i<=w.i1;i++){const d=Math.hypot((i+.5)*TS-at.x,(j+.5)*TS-at.y);if(d<140&&R()<1-d/160){const k=j*GW+i;if(ter[k]===0&&want!==1)continue;ter[k]=want;fmax[k]=FM[want]*(mode==='salt'?0.3:1.3);food[k]=Math.min(food[k],fmax[k]);n++}}markTerrain(at.x,at.y,160);
     const ru=rulerOf(f);if(ru)deed(ru,mode==='salt'?'salted the enemy land':'remade the land','make');
     log('terraform',3,mode==='salt'?`The Salting of ${regionName(at.x,at.y)}`:`The Remaking of ${regionName(at.x,at.y)}`,mode==='salt'?`The ${f.name} turn the land around their enemies into dead desert. ${n} leagues of earth will grow nothing.`:`The ${f.name} reshape ${regionName(at.x,at.y)} into ${want===1?'warm shallow seas':'endless forest'} suited to their bodies.`,at.x,at.y,[f],{why,decider:ru?ru.id:null})}
   function domestic(f){
@@ -970,7 +1005,7 @@ function makeSim(seed,opts={}){
       milestone(f,'legs',nLimbs(f.g)>=8,`The ${f.name} become eight-legged`,`They now scuttle on eight legs.`);
       milestone(f,'flesh',f.g.carnivory>0.75,`The ${f.name} turn to flesh`,`Every other creature is now food to them.`);
       // titans
-      if(R()<(f.arch==='horde'?0.01:f.g.aggression>0.55&&f.g.size>0.5?0.003:0.0006)&&f.pop>40&&S.year>150&&S.agents.filter(x=>x.titan&&!x.dead).length<2){const m=memb[Math.floor(R()*memb.length)];if(m.char==null)makeTitan(m)}
+      if(R()<(f.arch==='horde'?0.01:f.g.aggression>0.55&&f.g.size>0.5?0.003:0.0006)&&f.pop>40&&S.year>150&&S.agents.filter(x=>x.titan&&!x.dead).length<MAXTITANS){const m=memb[Math.floor(R()*memb.length)];if(m.char==null)makeTitan(m)}
       // economy
       f.treasury+=sets.reduce((t,s)=>t+Math.max(0,s.store-s.members.length*3)*0.03,0)+(f.tech.currency?2:0)+(f.tech.banking?4:0)+(f.tech.industry?6:0);
       for(const o of alive()){if(o===f)continue;const r=rel(f.id,o.id);if(r.tribute&&r.tribute.from===f.id){if(Y>r.tribute.until){r.tribute=null;continue}const a=capitalOf(f),b=capitalOf(o);if(a&&b){const t=Math.min(a.store*0.15,20);a.store-=t;b.store+=t}note(f.id,o.id,'grudge',0.03,'the humiliating tribute')}}
@@ -1180,7 +1215,7 @@ function makeSim(seed,opts={}){
     if(sh>0.16&&f.state!=null&&f.state!==F.id)add('merge',0.35+f.values.harmony*0.6+(1-T.piety)*0.3+T.genius*0.4+(f.values.trade>0.5?0.2:0),`${cap(cname(ru))} hoped to make one faith out of two and end the quarrel.`);
     opts.sort((a,b)=>b.sc-a.sc);return opts[0];
   }
-  function cultStep(f,m){
+  function cultStep(f,m){gStale=true;
     const c=S.chars[m.leader],F=S.faiths[m.faith];let sh=(f.belief||{})[F.id]||0;const ru=rulerOf(f);const s=settById(m.sett)||capitalOf(f)||f.origin;const nm=cname(c);
     if(f.state===F.id){F.cult=false;F.fate=F.fate||'state faith';endMove(m,'became the faith of the realm');return}
     if(ru&&ru.id===c.id){const old=f.state!=null?S.faiths[f.state]:null;f.state=F.id;F.cult=false;F.fate='state faith';endMove(m,'its prophet took the throne');log('convert',3,`${cap(nm)} Crowns the Cult`,`${cap(nm)} now rules the ${f.name}, and ${F.title} is the faith of the realm${old?`; the priests of ${old.title} are turned out of their temples`:''}.`,s.x,s.y,[f],{faith:F.id,char:c.id,why:['A preacher with a following is a dangerous guest at court.']});return}
@@ -1951,7 +1986,7 @@ function makeSim(seed,opts={}){
     if(lit){const L=S.langs[f.lang];const taken=S.langs.filter(o=>o!==L&&o.script).map(o=>o.script);const pool=[...SYLL_POOLS,...ALPHA_POOLS].filter(p=>!taken.includes(p));if(pool.length)setScript(L,pick(pool),'they brought their own letters');refreshNames(f)}
     const cs=capitalOf(f);const a=cs?pickCourtAgent(f,cs):null;const pr=a?newChar(f,'prophet',a):null;if(pr){pr.traits.piety=0.9;f.prophet=pr.id}
     foundFaith(f,pr,null,`The ${f.name} brought their gods with them.`,{domain:E.dom()});S.lastArrival=yr();return f};
-  S.emergeChance=()=>{const al=alive();if(!al.length||al.length>=14||yr()<140)return;if(yr()-(S.lastArrival||0)<80)return;if(R()<0.007+(al.length<=3?0.01:0))S.emerge()};
+  S.emergeChance=()=>{const al=alive();if(!al.length||al.length>=Math.round(14*LIN)||yr()<140)return;if(yr()-(S.lastArrival||0)<80/LIN)return;if(R()<0.007*AR+(al.length<=3?0.01:0))S.emerge()};
 
 
   // ---------- saga: crises and the end of the world ----------
@@ -1978,7 +2013,7 @@ function makeSim(seed,opts={}){
   };
   S.heroFac=()=>{const k=S.facs[S.kingdom];if(k&&k.died==null)return k;const isD=x=>{let p=x.parent;while(p!=null){if(p===S.kingdom)return true;p=S.facs[p].parent}return false};const al=alive();const d=al.filter(isD);return (d.length?d:al).sort((a,b)=>b.pop-a.pop)[0]||null};
   S.pickCrisis=(ageIdx)=>{const al=alive();const lowTech=al.every(f=>milTier(f)<=2);const opts=[];
-    if(ageIdx>=1&&(lowTech||ageIdx<4))opts.push('horde','horde');if(ageIdx>=1&&alive().length<8)opts.push('seafolk','emerge');
+    if(ageIdx>=1&&(lowTech||ageIdx<4))opts.push('horde','horde');if(ageIdx>=1&&alive().length<8*LIN)opts.push('seafolk','emerge');
     if(al.some(f=>!f.tech.medicine&&f.pop>40))opts.push('plague');opts.push('famine','comet','titan');if(al.some(f=>f.state!=null&&facSetts(f).length>=3))opts.push('heresy','heresy');return pick(opts)};
 
   S.finale=null;
@@ -2053,7 +2088,9 @@ function makeSim(seed,opts={}){
   // ---------- step ----------
   S.step=(dt)=>{
     S.year+=dt;
-    const fm=S.world.foodMult;for(let k=0;k<food.length;k++){if(rad[k]>0.15)continue;if(food[k]<fmax[k]*fm)food[k]=Math.min(fmax[k]*fm,food[k]+fmax[k]*0.2*dt*fm)}
+    const fm=S.world.foodMult;
+    // regrowth: Standard sweeps every tile each step (original behaviour); big worlds sweep every FSTRIDE-th tile with FSTRIDE*dt (same rate, 1/FSTRIDE the work per step)
+    {const fdt=dt*FSTRIDE;for(let k=fPhase;k<food.length;k+=FSTRIDE){if(rad[k]>0.15)continue;if(food[k]<fmax[k]*fm)food[k]=Math.min(fmax[k]*fm,food[k]+fmax[k]*0.2*fdt*fm)}fPhase=(fPhase+1)%FSTRIDE}
     rebuild();S.livePop=0;
     for(const a of S.agents){if(a.dead)continue;S.livePop++;
       a.age+=dt;a.cd-=dt;a.think-=dt;a.flash=Math.max(0,a.flash-dt);a.phase+=dt*(a.moving?a.spd*0.25:1.5);
@@ -2064,7 +2101,7 @@ function makeSim(seed,opts={}){
       if(a.state==='idle')plan(a);act(a,dt)}
     stepGame(dt);stepArmies(dt);
     for(const s of [...S.setts])updSett(s,dt);
-    S.yearAcc+=dt;if(S.yearAcc>=1){S.yearAcc-=1;yearly();S.agents=S.agents.filter(a=>!a.dead)}
+    S.yearAcc+=dt;if(S.yearAcc>=1){S.yearAcc-=1;yearly();S.agents=S.agents.filter(a=>!a.dead);reindexAgents()}
   };
   S.alive=alive;S.rulerOf=rulerOf;S.charAgent=charAgent;S.GOVS=GOVS;
   return S;

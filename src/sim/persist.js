@@ -36,11 +36,12 @@ function unpackGraph(recs){
   return objs[0]}
 
 // Snapshot a running sim (closure-held state is reached through S; the RNG state is exposed).
-function snapshotSim(S){return{v:1,seed:S.seed,rng:S.rng.get(),g:packGraph(S,PK_SKIP)}}
+function snapshotSim(S){return{v:1,seed:S.seed,size:S.size||'standard',rng:S.rng.get(),g:packGraph(S,PK_SKIP)}}
 // Rebuild a fresh sim from the seed, then pour the saved state into it *in place*, so the
 // sim's internal closures (which hold the same arrays and typed arrays) see the restored world.
 function restoreSim(snap,makeSimFn){
-  const S=makeSimFn(snap.seed);const D=unpackGraph(snap.g);
+  // older saves have no `size`: they were all made at the original (Standard) world size
+  const S=makeSimFn(snap.seed,{size:snap.size||'standard'});const D=unpackGraph(snap.g);
   for(const k of Object.keys(D)){const cur=S[k],val=D[k];
     if(typeof cur==='function')continue;
     if(ArrayBuffer.isView(cur)&&ArrayBuffer.isView(val)&&cur.length===val.length){cur.set(val);continue}
