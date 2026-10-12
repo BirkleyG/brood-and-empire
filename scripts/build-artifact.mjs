@@ -18,6 +18,14 @@ const headKept = head
 fs.writeFileSync(path.join(dist, 'artifact.html'), `${headKept}\n${body.trim()}\n`);
 
 const assets = fs.readdirSync(path.join(dist, 'assets')).map((f) => `assets/${f}`);
+
+// The artifact publisher rejects a literal U+FFFD (the Anthropic SDK uses one on purpose).
+// Inside JS strings, templates and regexes the escape \uFFFD means the same character.
+for (const a of assets.filter((f) => f.endsWith('.js'))) {
+  const p = path.join(dist, a);
+  const src = fs.readFileSync(p, 'utf8');
+  if (src.includes('\uFFFD')) fs.writeFileSync(p, src.replaceAll('\uFFFD', '\\uFFFD'));
+}
 const files = Object.fromEntries(assets.map((a) => [a, `dist/${a}`]));
 fs.writeFileSync(path.join(dist, 'artifact-files.json'), JSON.stringify(files, null, 2));
 console.log('Wrote dist/artifact.html with', assets.length, 'asset files:');
